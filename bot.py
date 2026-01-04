@@ -627,27 +627,27 @@ class AdvancedAI:
             'content': user_message
         })
         
-        # ✅ الترتيب الذكي: المجاني أولاً!
+        # ✅ الترتيب الذكي: الأذكى أولاً! 🧠
         
-        # 1. Groq - مجاني 100%! ⚡
-        response = await self.generate_response_groq(messages)
+        # 1. Claude - الأذكى! يفهم كل شي 🧠💎
+        response = await self.generate_response_claude(messages)
         if response:
-            logger.info("✅ Groq")
+            logger.info("✅ Claude")
             return self._format_response(response, user_profile)
         
-        # 2. DeepSeek - مجاني/رخيص! 🆓
-        response = await self.generate_response_deepseek(messages)
-        if response:
-            logger.info("✅ DeepSeek")
-            return self._format_response(response, user_profile)
-        
-        # 3. OpenAI - مدفوع (رخيص) 💵
+        # 2. OpenAI GPT - ذكي كمان 🤖
         response = await self.generate_response_openai(messages)
         if response:
             logger.info("✅ OpenAI")
             return self._format_response(response, user_profile)
         
-        # 4. Claude - مدفوع (غالي) 💰
+        # 3. Groq - مجاني وسريع ⚡
+        response = await self.generate_response_groq(messages)
+        if response:
+            logger.info("✅ Groq")
+            return self._format_response(response, user_profile)
+        
+        # 4. DeepSeek - backup فقط (ضعيف!) 🆓
         response = await self.generate_response_claude(messages)
         if response:
             logger.info("✅ Claude")
