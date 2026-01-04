@@ -942,6 +942,64 @@ class UserManager:
 # نظام المحادثة الذكي
 # ═══════════════════════════════════════════════════════════════
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# نظام الحظر (التعديل 11)
+# ═══════════════════════════════════════════════════════════════
+
+class BlockSystem:
+    """نظام حظر الأعضاء (KLR Only)"""
+    
+    def __init__(self):
+        self.blocked_users = set()
+        self.data_file = 'blocked_users.json'
+        self.load_data()
+    
+    def load_data(self):
+        """تحميل البيانات"""
+        try:
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.blocked_users = set(data.get('blocked', []))
+        except Exception as e:
+            logger.error(f"Error loading blocked users: {e}")
+    
+    def save_data(self):
+        """حفظ البيانات"""
+        try:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                json.dump({'blocked': list(self.blocked_users)}, f)
+        except Exception as e:
+            logger.error(f"Error saving blocked users: {e}")
+    
+    def block_user(self, user_id: int, by_leader: bool = False) -> bool:
+        """حظر مستخدم (KLR فقط)"""
+        if not by_leader:
+            return False
+        
+        self.blocked_users.add(user_id)
+        self.save_data()
+        logger.info(f"User {user_id} blocked")
+        return True
+    
+    def unblock_user(self, user_id: int, by_leader: bool = False) -> bool:
+        """إلغاء الحظر (KLR فقط)"""
+        if not by_leader:
+            return False
+        
+        if user_id in self.blocked_users:
+            self.blocked_users.remove(user_id)
+            self.save_data()
+            logger.info(f"User {user_id} unblocked")
+            return True
+        return False
+    
+    def is_blocked(self, user_id: int) -> bool:
+        """التحقق من الحظر"""
+        return user_id in self.blocked_users
+
 class SmartConversation:
     """نظام المحادثة الذكي"""
     
@@ -1186,8 +1244,27 @@ class FoxyBot(commands.Bot):
         if message.author == self.user:
             return
         
+        # ✅ التعديل 11: تجاهل المحظورين
+        if self.block_system.is_blocked(message.author.id):
+            return
+        
+        # ✅ التعديل 14: مراقبة قناة التحديثات
+        if message.channel.id == UPDATES_CHANNEL_ID and message.author.bot:
+            await self.process_update(message)
+            return
+        
         # تجاهل البوتات الأخرى
         if message.author.bot:
+            return
+        
+        # ✅ التعديل 10: حماية من المحتوى الفارغ
+        if not message.content and not message.attachments:
+            # لو فيه sticker فقط، نرد برد بسيط
+            if message.stickers:
+                try:
+                    await message.add_reaction("👍")
+                except:
+                    pass
             return
         
         # إحصائيات
@@ -1236,6 +1313,31 @@ class FoxyBot(commands.Bot):
         
         # معالجة الأوامر
         await self.process_commands(message)
+    
+
+    async def process_update(self, message: discord.Message):
+        """معالجة تحديث من قناة التحديثات (التعديل 14)"""
+        try:
+            update_info = {
+                'content': message.content,
+                'timestamp': datetime.datetime.now(TIMEZONE),
+                'embeds': [e.to_dict() for e in message.embeds] if message.embeds else [],
+                'attachments': [a.url for a in message.attachments] if message.attachments else []
+            }
+            
+            # حفظ في ذاكرة البوت
+            if not hasattr(self, 'game_updates'):
+                self.game_updates = []
+            
+            self.game_updates.append(update_info)
+            
+            # حفظ آخر 50 تحديث فقط
+            self.game_updates = self.game_updates[-50:]
+            
+            logger.info(f"📢 New update from channel {UPDATES_CHANNEL_ID}")
+            
+        except Exception as e:
+            logger.error(f"Error processing update: {e}")
     
     async def on_command_error(self, ctx, error):
         """معالجة أخطاء الأوامر"""
