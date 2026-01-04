@@ -2108,12 +2108,8 @@ class FoxyBot(commands.Bot):
         # تهيئة AI
         await self.ai_engine.initialize()
         
-        # إنشاء نظام المحادثة مع إصلاح Reply (التعديل 1)
-        self.conversation_system = SmartConversation(
-            self.ai_engine,
-            self.user_manager,
-            self.user.id  # ✅ تمرير bot user id
-        )
+        # سيتم تهيئة SmartConversation في on_ready (بعد توفر self.user)
+        self.conversation_system = None
         
         # بدء المهام الدورية
         if not self.cleanup_task:
@@ -2139,6 +2135,16 @@ class FoxyBot(commands.Bot):
     async def on_ready(self):
         """عند جاهزية البوت"""
         logger.info(f"✅ {self.user} is ready!")
+        
+        # تهيئة نظام المحادثة (التعديل 1 - إصلاح Reply)
+        if not self.conversation_system:
+            self.conversation_system = SmartConversation(
+                self.ai_engine,
+                self.user_manager,
+                self.user.id  # ✅ الآن self.user متاح!
+            )
+            logger.info("✅ SmartConversation initialized with bot_user_id")
+        
         logger.info(f"📊 Servers: {len(self.guilds)}")
         logger.info(f"👥 Users: {sum(g.member_count for g in self.guilds)}")
         
