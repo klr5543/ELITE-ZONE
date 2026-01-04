@@ -65,7 +65,7 @@ logger = logging.getLogger('FoxyBot')
 # ═══════════════════════════════════════════════════════════════
 
 # 🔒 المفاتيح تُقرأ من متغيرات البيئة فقط (آمن!)
-TOKEN = os.getenv('DISCORD_TOKEN')
+TOKEN = os.getenv('TOKEN') or os.getenv('DISCORD_TOKEN')  # يدعم الاسمين
 DEEPSEEK_KEY = os.getenv('DEEPSEEK_KEY')
 CLAUDE_KEY = os.getenv('CLAUDE_KEY')
 OPENAI_KEY = os.getenv('OPENAI_KEY')
@@ -1164,6 +1164,7 @@ class FoxyBot(commands.Bot):
         self.ai_engine = AdvancedAI()
         self.user_manager = UserManager()
         self.conversation_system = None
+        self.block_system = BlockSystem()  # ✅ نظام الحظر
         
         # الإحصائيات
         self.stats = {
@@ -1782,6 +1783,10 @@ def main():
 async def check_reminders():
     """التحقق من التذكيرات المستحقة"""
     try:
+        # التحقق من وجود reminders_system
+        if 'reminders_system' not in globals():
+            return
+        
         due_reminders = reminders_system.get_due_reminders()
         
         for reminder in due_reminders:
