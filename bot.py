@@ -3969,7 +3969,7 @@ async def achievements_command(ctx):
     await ctx.send(embed=embed)
     bot.stats['commands_executed'] += 1
 
-@bot.command(name='بطاقتي', aliases=['card', 'profile'])
+@bot.command(name='بطاقتي', aliases=['card', 'mycard'])
 async def profile_card_command(ctx, member: discord.Member = None):
     """عرض البطاقة الشخصية"""
     
