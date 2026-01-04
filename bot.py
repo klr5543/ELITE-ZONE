@@ -1198,6 +1198,14 @@ class FoxyBot(commands.Bot):
         if not self.save_task:
             self.save_task = self.save_loop.start()
         
+        # بدء مهمة التذكيرات (إذا كانت معرّفة)
+        try:
+            if 'check_reminders' in globals() and not check_reminders.is_running():
+                check_reminders.start()
+                logger.info("✅ Reminders task started")
+        except Exception as e:
+            logger.warning(f"Could not start reminders task: {e}")
+        
         logger.info("Bot setup complete!")
     
     async def on_ready(self):
@@ -1769,6 +1777,38 @@ def main():
         logger.error(f"❌ خطأ غير متوقع: {e}")
         logger.error(traceback.format_exc())
         print(f"\n❌ خطأ: {e}\n")
+
+@tasks.loop(minutes=1)
+async def check_reminders():
+    """التحقق من التذكيرات المستحقة"""
+    try:
+        due_reminders = reminders_system.get_due_reminders()
+        
+        for reminder in due_reminders:
+            channel = bot.get_channel(reminder.channel_id)
+            user = bot.get_user(reminder.user_id)
+            
+            if channel and user:
+                embed = discord.Embed(
+                    title="⏰ تذكير!",
+                    description=reminder.message,
+                    color=discord.Color.blue()
+                )
+                
+                embed.set_footer(text=f"تم إنشاؤه في {reminder.created_at.strftime('%Y-%m-%d %H:%M')}")
+                
+                await channel.send(f"{user.mention}", embed=embed)
+                logger.info(f"Sent reminder to {user.display_name}")
+    
+    except Exception as e:
+        logger.error(f"Error checking reminders: {e}")
+
+@check_reminders.before_loop
+async def before_check_reminders():
+    """انتظار جاهزية البوت"""
+    await bot.wait_until_ready()
+
+# ملاحظة: check_reminders.start() سيتم تشغيله تلقائياً عند استدعاء bot.run()
 
 if __name__ == "__main__":
     main()
@@ -2751,39 +2791,6 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
 # ─────────────────────────────────────────────────────────────
 # مهمة دورية للتذكيرات
 # ─────────────────────────────────────────────────────────────
-
-@tasks.loop(minutes=1)
-async def check_reminders():
-    """التحقق من التذكيرات المستحقة"""
-    try:
-        due_reminders = reminders_system.get_due_reminders()
-        
-        for reminder in due_reminders:
-            channel = bot.get_channel(reminder.channel_id)
-            user = bot.get_user(reminder.user_id)
-            
-            if channel and user:
-                embed = discord.Embed(
-                    title="⏰ تذكير!",
-                    description=reminder.message,
-                    color=discord.Color.blue()
-                )
-                
-                embed.set_footer(text=f"تم إنشاؤه في {reminder.created_at.strftime('%Y-%m-%d %H:%M')}")
-                
-                await channel.send(f"{user.mention}", embed=embed)
-                logger.info(f"Sent reminder to {user.display_name}")
-    
-    except Exception as e:
-        logger.error(f"Error checking reminders: {e}")
-
-@check_reminders.before_loop
-async def before_check_reminders():
-    """انتظار جاهزية البوت"""
-    await bot.wait_until_ready()
-
-# بدء مهمة التذكيرات
-check_reminders.start()
 
 # ═══════════════════════════════════════════════════════════════
 # أوامر متقدمة إضافية
