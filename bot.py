@@ -2563,6 +2563,133 @@ class FoxyBot(commands.Bot):
         
         await super().close()
         logger.info("Bot closed")
+    
+    # ═══════════════════════════════════════════════════════════════
+    # نظام الأوامر الطبيعية - يفهم الكلام! 🔥
+    # ═══════════════════════════════════════════════════════════════
+    
+    async def _parse_natural_command(self, message: discord.Message) -> Optional[Dict]:
+        """تحليل الأمر الطبيعي"""
+        content = message.content.lower()
+        
+        commands = {
+            'timeout': ['سكت', 'سكّت', 'اسكت', 'ميوت'],
+            'remove_timeout': ['شيل الميوت', 'فك الميوت', 'ارفع الميوت'],
+            'ban': ['احظر', 'حظر', 'بان'],
+            'kick': ['اطرد', 'طرد'],
+            'clear': ['امسح', 'مسح', 'نظف'],
+            'info': ['معلومات', 'بيانات', 'تفاصيل عن'],
+        }
+        
+        for cmd_type, keywords in commands.items():
+            if any(kw in content for kw in keywords):
+                return {
+                    'type': cmd_type,
+                    'author': message.author,
+                    'channel': message.channel,
+                    'message': message,
+                    'mentions': message.mentions,
+                    'content': content,
+                    'duration': self._extract_duration(content),
+                    'count': self._extract_number(content),
+                    'reason': self._extract_reason(content)
+                }
+        return None
+    
+    def _extract_duration(self, text: str) -> int:
+        """استخراج المدة"""
+        import re
+        patterns = [
+            (r'(\d+)\s*دقيق', 1), (r'(\d+)\s*ساعة', 60), (r'(\d+)\s*يوم', 1440),
+        ]
+        for pattern, multiplier in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return int(match.group(1)) * multiplier
+        return 5
+    
+    def _extract_number(self, text: str) -> int:
+        """استخراج رقم"""
+        import re
+        numbers = re.findall(r'\d+', text)
+        return int(numbers[-1]) if numbers else 10
+    
+    def _extract_reason(self, text: str) -> str:
+        """استخراج السبب"""
+        import re
+        for pattern in [r'بسبب (.+)', r'السبب (.+)']:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        return "بدون سبب"
+    
+    async def _execute_natural_command(self, cmd: Dict) -> Optional[str]:
+        """تنفيذ الأمر"""
+        if cmd['type'] != 'info' and cmd['author'].id != LEADER_ID:
+            return "❌ هذا الأمر للقائد فقط! 👑"
+        
+        try:
+            handlers = {
+                'timeout': self._handle_timeout,
+                'remove_timeout': self._handle_remove_timeout,
+                'ban': self._handle_ban,
+                'kick': self._handle_kick,
+                'clear': self._handle_clear,
+                'info': self._handle_info,
+            }
+            handler = handlers.get(cmd['type'])
+            if handler:
+                return await handler(cmd)
+        except discord.Forbidden:
+            return "❌ ما عندي صلاحيات!"
+        except Exception as e:
+            logger.error(f"Natural command error: {e}")
+            return f"❌ خطأ: {str(e)}"
+        return None
+    
+    async def _handle_timeout(self, cmd: Dict) -> str:
+        if not cmd['mentions']:
+            return "❌ يا قائد! منشن العضو 🎯"
+        member = cmd['mentions'][0]
+        await member.timeout(timedelta(minutes=cmd['duration']), reason=cmd['reason'])
+        return f"✅ يا قائد! تم إسكات {member.mention} لمدة {cmd['duration']} دقيقة\n📝 {cmd['reason']} 👑"
+    
+    async def _handle_remove_timeout(self, cmd: Dict) -> str:
+        if not cmd['mentions']:
+            return "❌ يا قائد! منشن العضو 🎯"
+        member = cmd['mentions'][0]
+        await member.timeout(None)
+        return f"✅ يا قائد! تم فك الإسكات عن {member.mention} 🔓"
+    
+    async def _handle_ban(self, cmd: Dict) -> str:
+        if not cmd['mentions']:
+            return "❌ يا قائد! منشن العضو 🎯"
+        member = cmd['mentions'][0]
+        await member.ban(reason=cmd['reason'])
+        return f"✅ يا قائد! تم حظر {member.mention}\n📝 {cmd['reason']} 🔨"
+    
+    async def _handle_kick(self, cmd: Dict) -> str:
+        if not cmd['mentions']:
+            return "❌ يا قائد! منشن العضو 🎯"
+        member = cmd['mentions'][0]
+        await member.kick(reason=cmd['reason'])
+        return f"✅ يا قائد! تم طرد {member.mention}\n📝 {cmd['reason']} 👢"
+    
+    async def _handle_clear(self, cmd: Dict) -> str:
+        deleted = await cmd['channel'].purge(limit=cmd['count'])
+        return f"✅ يا قائد! تم مسح {len(deleted)} رسالة 🗑️"
+    
+    async def _handle_info(self, cmd: Dict) -> str:
+        if not cmd['mentions']:
+            return "❌ منشن العضو! 🎯"
+        member = cmd['mentions'][0]
+        days = (datetime.datetime.now() - member.joined_at).days
+        return f"""📋 معلومات {member.mention}:
+👤 الاسم: **{member.display_name}**
+🆔 ID: `{member.id}`
+📅 انضم: {member.joined_at.strftime('%Y-%m-%d')} ({days} يوم)
+🎭 الأدوار: {len(member.roles) - 1}
+✅ الحالة: {member.status}"""
 
 # ═══════════════════════════════════════════════════════════════
 # الأوامر الأساسية
