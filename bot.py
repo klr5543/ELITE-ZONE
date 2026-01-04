@@ -2388,6 +2388,22 @@ class FoxyBot(commands.Bot):
         # إحصائيات
         self.stats['messages_received'] += 1
         
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ نظام الأوامر الطبيعية (جديد!) 🔥
+        # ═══════════════════════════════════════════════════════════════
+        if any(word in message.content.lower() for word in ['فوكسي', 'foxy']):
+            natural_command = await self._parse_natural_command(message)
+            if natural_command:
+                try:
+                    result = await self._execute_natural_command(natural_command)
+                    if result:
+                        await message.reply(result, mention_author=False)
+                        logger.info(f"✅ Natural command executed: {natural_command['type']}")
+                        return
+                except Exception as e:
+                    logger.error(f"Natural command error: {e}")
+                    # استمر في المعالجة العادية
+        
         # ✅ معالجة الصور تلقائياً (إذا كانت الرسالة تحتوي صورة)
         has_image = False
         if message.attachments:
@@ -5914,6 +5930,215 @@ async def joke_command(ctx):
 # 
 # نتمنى لكم تجربة رائعة في سيرفر سبكتر!
 # 
+# ═══════════════════════════════════════════════════════════════
+
+    # ═══════════════════════════════════════════════════════════════
+    # نظام الأوامر الطبيعية (Natural Language Commands) 🔥
+    # ═══════════════════════════════════════════════════════════════
+    
+    async def _parse_natural_command(self, message: discord.Message) -> Optional[Dict]:
+        """تحليل الأمر الطبيعي من الكلام"""
+        content = message.content.lower()
+        
+        # الأوامر المدعومة
+        commands = {
+            'timeout': ['سكت', 'سكّت', 'اسكت', 'timeout', 'ميوت', 'mute'],
+            'remove_timeout': ['شيل الميوت', 'فك الميوت', 'unmute', 'الغي السكت', 'ارفع الميوت'],
+            'ban': ['احظر', 'حظر', 'ban', 'بان'],
+            'kick': ['اطرد', 'طرد', 'kick'],
+            'clear': ['امسح', 'مسح', 'clear', 'احذف', 'نظف'],
+            'info': ['معلومات', 'info', 'بيانات', 'تفاصيل عن'],
+            'warn': ['حذر', 'تحذير', 'warn', 'انذار'],
+        }
+        
+        # ابحث عن الأمر
+        for cmd_type, keywords in commands.items():
+            if any(kw in content for kw in keywords):
+                return {
+                    'type': cmd_type,
+                    'author': message.author,
+                    'channel': message.channel,
+                    'message': message,
+                    'mentions': message.mentions,
+                    'content': content,
+                    'duration': self._extract_duration(content),
+                    'count': self._extract_number(content),
+                    'reason': self._extract_reason(content)
+                }
+        
+        return None
+    
+    def _extract_duration(self, text: str) -> int:
+        """استخراج المدة بالدقائق"""
+        import re
+        
+        patterns = [
+            (r'(\d+)\s*دقيق', 1),
+            (r'(\d+)\s*minut', 1),
+            (r'(\d+)\s*ساعة', 60),
+            (r'(\d+)\s*hour', 60),
+            (r'(\d+)\s*يوم', 1440),
+            (r'(\d+)\s*day', 1440),
+        ]
+        
+        for pattern, multiplier in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return int(match.group(1)) * multiplier
+        
+        return 5  # افتراضي: 5 دقائق
+    
+    def _extract_number(self, text: str) -> int:
+        """استخراج رقم"""
+        import re
+        numbers = re.findall(r'\d+', text)
+        return int(numbers[-1]) if numbers else 10
+    
+    def _extract_reason(self, text: str) -> str:
+        """استخراج السبب"""
+        import re
+        patterns = [r'بسبب (.+)', r'السبب (.+)', r'reason[:\s]+(.+)']
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        
+        return "بدون سبب محدد"
+    
+    async def _execute_natural_command(self, cmd: Dict) -> Optional[str]:
+        """تنفيذ الأمر الطبيعي"""
+        cmd_type = cmd['type']
+        author = cmd['author']
+        
+        # التحقق من الصلاحيات - القائد فقط!
+        if cmd_type != 'info' and author.id != LEADER_ID:
+            return "❌ هذا الأمر للقائد فقط! 👑"
+        
+        try:
+            if cmd_type == 'timeout':
+                return await self._handle_timeout(cmd)
+            elif cmd_type == 'remove_timeout':
+                return await self._handle_remove_timeout(cmd)
+            elif cmd_type == 'ban':
+                return await self._handle_ban(cmd)
+            elif cmd_type == 'kick':
+                return await self._handle_kick(cmd)
+            elif cmd_type == 'clear':
+                return await self._handle_clear(cmd)
+            elif cmd_type == 'info':
+                return await self._handle_info(cmd)
+            elif cmd_type == 'warn':
+                return await self._handle_warn(cmd)
+        
+        except discord.Forbidden:
+            return "❌ ما عندي صلاحيات لهذا الإجراء!"
+        except Exception as e:
+            logger.error(f"Natural command error: {e}")
+            return f"❌ حدث خطأ: {str(e)}"
+        
+        return None
+    
+    async def _handle_timeout(self, cmd: Dict) -> str:
+        """إسكات عضو"""
+        if not cmd['mentions']:
+            return "❌ يا قائد! لازم تمنشن العضو اللي تبي تسكته 🎯"
+        
+        member = cmd['mentions'][0]
+        duration = cmd['duration']
+        reason = cmd['reason']
+        
+        await member.timeout(timedelta(minutes=duration), reason=reason)
+        
+        return f"✅ يا قائد! تم إسكات {member.mention} لمدة {duration} دقيقة\n📝 السبب: {reason} 👑"
+    
+    async def _handle_remove_timeout(self, cmd: Dict) -> str:
+        """إلغاء الإسكات"""
+        if not cmd['mentions']:
+            return "❌ يا قائد! لازم تمنشن العضو 🎯"
+        
+        member = cmd['mentions'][0]
+        await member.timeout(None)
+        
+        return f"✅ يا قائد! تم فك الإسكات عن {member.mention} 🔓"
+    
+    async def _handle_ban(self, cmd: Dict) -> str:
+        """حظر عضو"""
+        if not cmd['mentions']:
+            return "❌ يا قائد! لازم تمنشن العضو اللي تبي تحظره 🎯"
+        
+        member = cmd['mentions'][0]
+        reason = cmd['reason']
+        
+        await member.ban(reason=reason)
+        
+        return f"✅ يا قائد! تم حظر {member.mention} نهائياً من السيرفر\n📝 السبب: {reason} 🔨"
+    
+    async def _handle_kick(self, cmd: Dict) -> str:
+        """طرد عضو"""
+        if not cmd['mentions']:
+            return "❌ يا قائد! لازم تمنشن العضو اللي تبي تطرده 🎯"
+        
+        member = cmd['mentions'][0]
+        reason = cmd['reason']
+        
+        await member.kick(reason=reason)
+        
+        return f"✅ يا قائد! تم طرد {member.mention} من السيرفر\n📝 السبب: {reason} 👢"
+    
+    async def _handle_clear(self, cmd: Dict) -> str:
+        """مسح الرسائل"""
+        count = cmd['count']
+        channel = cmd['channel']
+        
+        deleted = await channel.purge(limit=count)
+        
+        return f"✅ يا قائد! تم مسح {len(deleted)} رسالة من القناة 🗑️"
+    
+    async def _handle_info(self, cmd: Dict) -> str:
+        """معلومات عضو"""
+        if not cmd['mentions']:
+            return "❌ لازم تمنشن العضو! 🎯"
+        
+        member = cmd['mentions'][0]
+        
+        # حساب الوقت منذ الانضمام
+        days_since_join = (datetime.datetime.now() - member.joined_at).days
+        
+        info = f"""📋 معلومات {member.mention}:
+
+👤 الاسم: **{member.display_name}**
+🆔 المعرف: `{member.id}`
+📅 انضم للسيرفر: {member.joined_at.strftime('%Y-%m-%d')} ({days_since_join} يوم)
+🎭 الأدوار: {len(member.roles) - 1} دور
+✅ الحالة: {member.status}
+🤖 بوت: {'نعم' if member.bot else 'لا'}"""
+        
+        return info
+    
+    async def _handle_warn(self, cmd: Dict) -> str:
+        """تحذير عضو"""
+        if not cmd['mentions']:
+            return "❌ يا قائد! لازم تمنشن العضو 🎯"
+        
+        member = cmd['mentions'][0]
+        reason = cmd['reason']
+        
+        # حفظ التحذير (يمكن إضافة نظام database لاحقاً)
+        warning_msg = f"""⚠️ تحذير ⚠️
+
+{member.mention}, تلقيت تحذيراً من القيادة!
+📝 السبب: {reason}
+
+الرجاء الالتزام بقوانين السيرفر! 👑"""
+        
+        await cmd['channel'].send(warning_msg)
+        
+        return f"✅ يا قائد! تم تحذير {member.mention} 👑"
+
+
+# ═══════════════════════════════════════════════════════════════
+# تشغيل البوت
 # ═══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
