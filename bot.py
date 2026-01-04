@@ -176,7 +176,7 @@ class ConversationMemory:
 
 @dataclass 
 class UserProfile:
-    """ملف المستخدم"""
+    """ملف المستخدم - محسّن مع تحليل الشخصية"""
     user_id: int
     username: str
     rank: UserRank
@@ -187,8 +187,82 @@ class UserProfile:
     stats: Dict[str, int] = field(default_factory=dict)
     personality: PersonalityType = None  # التعديل 24
     mood: MoodType = MoodType.NEUTRAL    # التعديل 17
-    intelligence_score: float = 0.0      # التعديل 24
+    intelligence_score: float = 5.0      # التعديل 24 (من 10)
     conversation_history: List[Dict] = field(default_factory=list)  # التعديل 21
+    
+    # ✅ نظام تحليل الأسئلة (التعديل 24)
+    question_types: Dict[str, int] = field(default_factory=lambda: {
+        'smart': 0,      # أسئلة ذكية
+        'silly': 0,      # أسئلة بسيطة
+        'provocative': 0, # أسئلة استفزازية
+        'social': 0,     # أسئلة اجتماعية
+        'funny': 0,      # أسئلة مضحكة
+        'game': 0        # أسئلة عن اللعبة
+    })
+    total_questions: int = 0
+    
+    def analyze_question(self, question: str):
+        """تحليل السؤال وتحديث الشخصية تلقائياً"""
+        self.total_questions += 1
+        q_lower = question.lower()
+        
+        # تحليل نوع السؤال
+        if any(word in q_lower for word in ['كيف', 'استراتيجية', 'أفضل طريقة', 'نصيحة', 'شرح']):
+            self.question_types['smart'] += 1
+        elif any(word in q_lower for word in ['1+1', 'هل الماء', 'واضح', 'بديهي']):
+            self.question_types['silly'] += 1
+        elif any(word in q_lower for word in ['غبي', 'سيء', 'ما تعرف', 'فاشل']):
+            self.question_types['provocative'] += 1
+        elif any(word in q_lower for word in ['شلونك', 'كيف حالك', 'وش أخبارك', 'كيفك']):
+            self.question_types['social'] += 1
+        elif any(emoji in question for emoji in ['😂', '🤣', '😄']):
+            self.question_types['funny'] += 1
+        elif any(word in q_lower for word in ['roger', 'luffy', 'اللعبة', 'الشخصية', 'attacker']):
+            self.question_types['game'] += 1
+        
+        # تحديث الشخصية كل 5 أسئلة
+        if self.total_questions % 5 == 0:
+            self._update_personality()
+    
+    def _update_personality(self):
+        """تحديث الشخصية بناءً على تحليل الأسئلة"""
+        if self.total_questions < 5:
+            return
+        
+        # حساب النسب
+        smart_ratio = self.question_types['smart'] / self.total_questions
+        silly_ratio = self.question_types['silly'] / self.total_questions
+        provocative_ratio = self.question_types['provocative'] / self.total_questions
+        social_ratio = self.question_types['social'] / self.total_questions
+        funny_ratio = self.question_types['funny'] / self.total_questions
+        
+        # تحديد الشخصية (الأعلى نسبة)
+        if smart_ratio > 0.35:
+            self.personality = PersonalityType.SMART
+            self.intelligence_score = min(10.0, 5 + smart_ratio * 10)
+            logger.info(f"👤 {self.username} → SMART (IQ: {self.intelligence_score:.1f})")
+        
+        elif provocative_ratio > 0.25:
+            self.personality = PersonalityType.TESTER
+            self.intelligence_score = max(3.0, 7 - provocative_ratio * 5)
+            logger.info(f"👤 {self.username} → TESTER (يحب الاستفزاز)")
+        
+        elif silly_ratio > 0.35:
+            self.personality = PersonalityType.SILLY
+            self.intelligence_score = max(2.0, 5 - silly_ratio * 6)
+            logger.info(f"👤 {self.username} → SILLY (بسيط)")
+        
+        elif social_ratio > 0.35:
+            self.personality = PersonalityType.SOCIAL
+            logger.info(f"👤 {self.username} → SOCIAL (اجتماعي)")
+        
+        elif funny_ratio > 0.30:
+            self.personality = PersonalityType.FUNNY
+            logger.info(f"👤 {self.username} → FUNNY (مزحجي)")
+        
+        else:
+            self.personality = PersonalityType.NEUTRAL
+            self.intelligence_score = 5.0
 
 @dataclass
 class LeaderInstruction:
@@ -2009,6 +2083,10 @@ class SmartConversation:
         if profile.rank != correct_rank:
             profile.rank = correct_rank
             logger.info(f"Updated rank for {message.author.id} to {correct_rank.value}")
+        
+        # ✅ تحليل السؤال لتحديد الشخصية تلقائياً (التعديل 24)
+        if '?' in message.content or any(word in message.content.lower() for word in ['كيف', 'وش', 'ليش', 'متى', 'أين']):
+            profile.analyze_question(message.content)
         
         # تحديث المزاج (التعديل 17)
         profile.mood = self.detect_mood(message)
