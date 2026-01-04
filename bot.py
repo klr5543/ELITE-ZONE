@@ -2231,6 +2231,29 @@ class FoxyBot(commands.Bot):
         # إحصائيات
         self.stats['messages_received'] += 1
         
+        # ✅ معالجة الصور تلقائياً (إذا كانت الرسالة تحتوي صورة)
+        if message.attachments:
+            for attachment in message.attachments:
+                # التحقق من أن الملف صورة
+                if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                    # قراءة الصورة تلقائياً
+                    try:
+                        description = await self.ai_engine.read_image(attachment.url)
+                        
+                        if description:
+                            # رد مع وصف الصورة
+                            await message.reply(
+                                f"🖼️ شفت الصورة!\n\n{description}",
+                                mention_author=False
+                            )
+                            self.stats['images_read'] += 1
+                            logger.info(f"✅ Auto-analyzed image for {message.author.name}")
+                            # إذا كانت الصورة فقط بدون نص، نرجع
+                            if not message.content.strip():
+                                return
+                    except Exception as e:
+                        logger.error(f"Error auto-analyzing image: {e}")
+        
         # معالجة الرسائل العادية
         try:
             # كشف السياق
@@ -5616,19 +5639,17 @@ async def joke_command(ctx):
 # تحديث معالج الرسائل لتتبع الإحصائيات الحية
 # ═══════════════════════════════════════════════════════════════
 
-@bot.event
-async def on_message_enhanced(message: discord.Message):
-    """معالج رسائل محسّن"""
-    
-    if message.author == bot.user or message.author.bot:
-        return
-    
-    # تتبع الإحصائيات
-    stats_system.track_message(message)
-    live_stats_system.track_message(message.author.id)
-    
-    # باقي المعالجة...
-    await bot.process_commands(message)
+# ❌ تم تعطيل هذه الدالة - كانت تسبب ردود مكررة!
+# السبب: on_message_enhanced تشتغل مع on_message الأساسية
+# الحل: الإحصائيات تُتتبع داخل on_message
+
+# @bot.event
+# async def on_message_enhanced(message: discord.Message):
+#     if message.author == bot.user or message.author.bot:
+#         return
+#     stats_system.track_message(message)
+#     live_stats_system.track_message(message.author.id)
+#     await bot.process_commands(message)
 
 # ═══════════════════════════════════════════════════════════════
 # نهاية الكود - End of Code
