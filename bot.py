@@ -2650,30 +2650,99 @@ class FoxyBot(commands.Bot):
     async def _handle_timeout(self, cmd: Dict) -> str:
         if not cmd['mentions']:
             return "❌ يا قائد! منشن العضو 🎯"
+        
         member = cmd['mentions'][0]
-        await member.timeout(timedelta(minutes=cmd['duration']), reason=cmd['reason'])
-        return f"✅ يا قائد! تم إسكات {member.mention} لمدة {cmd['duration']} دقيقة\n📝 {cmd['reason']} 👑"
+        
+        # التحقق من الصلاحيات
+        bot_member = cmd['message'].guild.me
+        
+        # تحقق 1: البوت عنده صلاحية timeout
+        if not bot_member.guild_permissions.moderate_members:
+            return "❌ يا قائد! ما عندي صلاحية Timeout Members!"
+        
+        # تحقق 2: رتبة البوت أعلى من العضو
+        if member.top_role >= bot_member.top_role:
+            return f"❌ يا قائد! رتبة {member.mention} أعلى مني! ما أقدر أسكته!"
+        
+        # تحقق 3: العضو مو Owner
+        if member.id == cmd['message'].guild.owner_id:
+            return "❌ يا قائد! ما أقدر أسكت صاحب السيرفر!"
+        
+        # تنفيذ الأمر
+        try:
+            await member.timeout(timedelta(minutes=cmd['duration']), reason=cmd['reason'])
+            return f"✅ يا قائد! تم إسكات {member.mention} لمدة {cmd['duration']} دقيقة\n📝 {cmd['reason']} 👑"
+        except discord.Forbidden:
+            return "❌ يا قائد! Discord رفض العملية! تأكد من الصلاحيات!"
+        except Exception as e:
+            logger.error(f"Timeout error: {e}")
+            return f"❌ خطأ: {str(e)}"
     
     async def _handle_remove_timeout(self, cmd: Dict) -> str:
         if not cmd['mentions']:
             return "❌ يا قائد! منشن العضو 🎯"
+        
         member = cmd['mentions'][0]
-        await member.timeout(None)
-        return f"✅ يا قائد! تم فك الإسكات عن {member.mention} 🔓"
+        bot_member = cmd['message'].guild.me
+        
+        if not bot_member.guild_permissions.moderate_members:
+            return "❌ يا قائد! ما عندي صلاحية Moderate Members!"
+        
+        if member.top_role >= bot_member.top_role:
+            return f"❌ يا قائد! رتبة {member.mention} أعلى مني!"
+        
+        try:
+            await member.timeout(None)
+            return f"✅ يا قائد! تم فك الإسكات عن {member.mention} 🔓"
+        except discord.Forbidden:
+            return "❌ Discord رفض العملية!"
+        except Exception as e:
+            return f"❌ خطأ: {str(e)}"
     
     async def _handle_ban(self, cmd: Dict) -> str:
         if not cmd['mentions']:
             return "❌ يا قائد! منشن العضو 🎯"
+        
         member = cmd['mentions'][0]
-        await member.ban(reason=cmd['reason'])
-        return f"✅ يا قائد! تم حظر {member.mention}\n📝 {cmd['reason']} 🔨"
+        bot_member = cmd['message'].guild.me
+        
+        if not bot_member.guild_permissions.ban_members:
+            return "❌ يا قائد! ما عندي صلاحية Ban Members!"
+        
+        if member.top_role >= bot_member.top_role:
+            return f"❌ يا قائد! رتبة {member.mention} أعلى مني!"
+        
+        if member.id == cmd['message'].guild.owner_id:
+            return "❌ يا قائد! ما أقدر أحظر صاحب السيرفر!"
+        
+        try:
+            await member.ban(reason=cmd['reason'])
+            return f"✅ يا قائد! تم حظر {member.mention}\n📝 {cmd['reason']} 🔨"
+        except discord.Forbidden:
+            return "❌ Discord رفض العملية!"
+        except Exception as e:
+            return f"❌ خطأ: {str(e)}"
     
     async def _handle_kick(self, cmd: Dict) -> str:
         if not cmd['mentions']:
             return "❌ يا قائد! منشن العضو 🎯"
+        
         member = cmd['mentions'][0]
-        await member.kick(reason=cmd['reason'])
-        return f"✅ يا قائد! تم طرد {member.mention}\n📝 {cmd['reason']} 👢"
+        bot_member = cmd['message'].guild.me
+        
+        if not bot_member.guild_permissions.kick_members:
+            return "❌ يا قائد! ما عندي صلاحية Kick Members!"
+        
+        if member.top_role >= bot_member.top_role:
+            return f"❌ يا قائد! رتبة {member.mention} أعلى مني!"
+        
+        try:
+            await member.kick(reason=cmd['reason'])
+            return f"✅ يا قائد! تم طرد {member.mention}\n📝 {cmd['reason']} 👢"
+        except discord.Forbidden:
+            return "❌ Discord رفض العملية!"
+        except Exception as e:
+            return f"❌ خطأ: {str(e)}"
     
     async def _handle_clear(self, cmd: Dict) -> str:
         deleted = await cmd['channel'].purge(limit=cmd['count'])
