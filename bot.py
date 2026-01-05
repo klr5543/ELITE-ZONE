@@ -1914,6 +1914,346 @@ class UpdatesSystem:
         return results[:10]
 
 # ═══════════════════════════════════════════════════════════════
+# نظام مراقبة الأخبار التلقائي - NEW!
+# ═══════════════════════════════════════════════════════════════
+
+class NewsMonitor:
+    """مراقبة روم الأخبار وإرسال تنبيهات تلقائية"""
+    
+    def __init__(self, bot):
+        self.bot = bot
+        self.monitored_channels = {}  # {channel_id: last_message_id}
+        self.alert_users = set()  # من يستقبل التنبيهات
+        self.data_file = 'news_monitor.json'
+        self._load()
+    
+    def _load(self):
+        """تحميل البيانات"""
+        try:
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.monitored_channels = {int(k): v for k, v in data.get('channels', {}).items()}
+                    self.alert_users = set(data.get('alert_users', []))
+        except Exception as e:
+            logger.error(f"Error loading news monitor: {e}")
+    
+    def _save(self):
+        """حفظ البيانات"""
+        try:
+            data = {
+                'channels': {str(k): v for k, v in self.monitored_channels.items()},
+                'alert_users': list(self.alert_users)
+            }
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving news monitor: {e}")
+    
+    def add_monitored_channel(self, channel_id: int):
+        """إضافة روم للمراقبة"""
+        self.monitored_channels[channel_id] = None
+        self._save()
+        logger.info(f"📡 Monitoring channel: {channel_id}")
+    
+    def add_alert_user(self, user_id: int):
+        """إضافة مستخدم لاستقبال التنبيهات"""
+        self.alert_users.add(user_id)
+        self._save()
+        logger.info(f"🔔 Alert user added: {user_id}")
+    
+    async def check_for_news(self) -> List[Dict]:
+        """فحص الأخبار الجديدة"""
+        new_items = []
+        
+        for channel_id, last_msg_id in list(self.monitored_channels.items()):
+            try:
+                channel = self.bot.get_channel(channel_id)
+                if not channel:
+                    continue
+                
+                # جلب آخر رسالة
+                async for message in channel.history(limit=1):
+                    # تحقق من جديد
+                    if last_msg_id is None or message.id > last_msg_id:
+                        # خبر جديد!
+                        news_item = await self._process_news(message)
+                        if news_item:
+                            new_items.append(news_item)
+                        
+                        # تحديث آخر رسالة
+                        self.monitored_channels[channel_id] = message.id
+                        self._save()
+                    break
+            
+            except Exception as e:
+                logger.error(f"Error checking news in {channel_id}: {e}")
+        
+        return new_items
+    
+    async def _process_news(self, message: discord.Message) -> Optional[Dict]:
+        """معالجة خبر جديد"""
+        try:
+            news = {
+                'channel': message.channel.name,
+                'author': message.author.name,
+                'time': message.created_at.strftime('%Y-%m-%d %H:%M'),
+                'content': message.content[:200] if message.content else '',
+                'has_images': len(message.attachments) > 0,
+                'image_descriptions': []
+            }
+            
+            # قراءة الصور إذا موجودة
+            if message.attachments:
+                for attachment in message.attachments[:2]:
+                    if attachment.content_type and 'image' in attachment.content_type:
+                        try:
+                            # تحميل وتحويل
+                            image_data = await attachment.read()
+                            image_base64 = base64.b64encode(image_data).decode('utf-8')
+                            
+                            # قراءة بـ Claude Vision
+                            if hasattr(self.bot, 'ai_engine') and self.bot.ai_engine:
+                                desc = await self.bot.ai_engine.read_image_base64(
+                                    image_base64,
+                                    attachment.content_type
+                                )
+                                if desc:
+                                    news['image_descriptions'].append(desc[:150])
+                        except Exception as e:
+                            logger.error(f"Error reading news image: {e}")
+            
+            return news
+        
+        except Exception as e:
+            logger.error(f"Error processing news: {e}")
+            return None
+    
+    async def send_alerts(self, news_items: List[Dict]):
+        """إرسال تنبيهات للمستخدمين"""
+        if not news_items or not self.alert_users:
+            return
+        
+        for news in news_items:
+            # تنسيق الرسالة
+            alert_msg = f"📰 **خبر جديد في {news['channel']}!**\n\n"
+            
+            if news['image_descriptions']:
+                alert_msg += "🖼️ **محتوى الصورة:**\n"
+                for i, desc in enumerate(news['image_descriptions'], 1):
+                    alert_msg += f"{i}. {desc}\n"
+                alert_msg += "\n"
+            
+            if news['content']:
+                alert_msg += f"💬 **النص:**\n{news['content']}\n\n"
+            
+            alert_msg += f"⏰ {news['time']}"
+            
+            # إرسال للمستخدمين
+            for user_id in self.alert_users:
+                try:
+                    user = await self.bot.fetch_user(user_id)
+                    if user:
+                        await user.send(alert_msg)
+                        logger.info(f"✅ Alert sent to {user_id}")
+                except Exception as e:
+                    logger.error(f"Error sending alert to {user_id}: {e}")
+
+# ═══════════════════════════════════════════════════════════════
+# نظام التذكيرات الذكية - NEW!
+# ═══════════════════════════════════════════════════════════════
+
+class SmartReminders:
+    """نظام تذكيرات ذكي"""
+    
+    def __init__(self):
+        self.reminders = {}  # {user_id: [reminders]}
+        self.data_file = 'reminders.json'
+        self._load()
+    
+    def _load(self):
+        """تحميل التذكيرات"""
+        try:
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # تحويل timestamps
+                    for user_id, reminders in data.items():
+                        self.reminders[int(user_id)] = []
+                        for r in reminders:
+                            r['time'] = datetime.datetime.fromisoformat(r['time'])
+                            self.reminders[int(user_id)].append(r)
+        except Exception as e:
+            logger.error(f"Error loading reminders: {e}")
+    
+    def _save(self):
+        """حفظ التذكيرات"""
+        try:
+            # تحويل للحفظ
+            save_data = {}
+            for user_id, reminders in self.reminders.items():
+                save_data[str(user_id)] = []
+                for r in reminders:
+                    r_copy = r.copy()
+                    r_copy['time'] = r['time'].isoformat()
+                    save_data[str(user_id)].append(r_copy)
+            
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving reminders: {e}")
+    
+    def add_reminder(self, user_id: int, message: str, remind_time: datetime.datetime, repeat: str = None):
+        """إضافة تذكير"""
+        if user_id not in self.reminders:
+            self.reminders[user_id] = []
+        
+        reminder = {
+            'id': hashlib.md5(f"{user_id}{time.time()}".encode()).hexdigest()[:8],
+            'message': message,
+            'time': remind_time,
+            'repeat': repeat,  # 'daily', 'weekly', None
+            'created_at': datetime.datetime.now()
+        }
+        
+        self.reminders[user_id].append(reminder)
+        self._save()
+        logger.info(f"⏰ Reminder added for {user_id}: {message}")
+        return reminder['id']
+    
+    def get_due_reminders(self) -> List[Tuple[int, Dict]]:
+        """الحصول على التذكيرات المستحقة"""
+        now = datetime.datetime.now()
+        due = []
+        
+        for user_id, reminders in self.reminders.items():
+            for reminder in reminders[:]:
+                if reminder['time'] <= now:
+                    due.append((user_id, reminder))
+                    
+                    # معالجة التكرار
+                    if reminder['repeat'] == 'daily':
+                        reminder['time'] += datetime.timedelta(days=1)
+                    elif reminder['repeat'] == 'weekly':
+                        reminder['time'] += datetime.timedelta(weeks=1)
+                    else:
+                        # حذف إذا ما في تكرار
+                        reminders.remove(reminder)
+        
+        if due:
+            self._save()
+        
+        return due
+    
+    def remove_reminder(self, user_id: int, reminder_id: str) -> bool:
+        """حذف تذكير"""
+        if user_id in self.reminders:
+            for reminder in self.reminders[user_id]:
+                if reminder['id'] == reminder_id:
+                    self.reminders[user_id].remove(reminder)
+                    self._save()
+                    return True
+        return False
+    
+    def list_reminders(self, user_id: int) -> List[Dict]:
+        """قائمة تذكيرات المستخدم"""
+        return self.reminders.get(user_id, [])
+
+# ═══════════════════════════════════════════════════════════════
+# نظام Pattern Recognition - NEW!
+# ═══════════════════════════════════════════════════════════════
+
+class PatternRecognition:
+    """تعلم أنماط سلوك المستخدمين"""
+    
+    def __init__(self):
+        self.patterns = {}  # {user_id: {pattern_type: data}}
+        self.data_file = 'patterns.json'
+        self._load()
+    
+    def _load(self):
+        """تحميل الأنماط"""
+        try:
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    self.patterns = json.load(f)
+                    # تحويل keys لـ int
+                    self.patterns = {int(k): v for k, v in self.patterns.items()}
+        except Exception as e:
+            logger.error(f"Error loading patterns: {e}")
+    
+    def _save(self):
+        """حفظ الأنماط"""
+        try:
+            # تحويل للحفظ
+            save_data = {str(k): v for k, v in self.patterns.items()}
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving patterns: {e}")
+    
+    def record_interaction(self, user_id: int, message_type: str, content: str, timestamp: datetime.datetime):
+        """تسجيل تفاعل"""
+        if user_id not in self.patterns:
+            self.patterns[user_id] = {
+                'common_questions': defaultdict(int),
+                'activity_times': [],
+                'last_interactions': []
+            }
+        
+        # تسجيل الأسئلة الشائعة
+        question_key = content.lower()[:50]
+        self.patterns[user_id]['common_questions'][question_key] += 1
+        
+        # تسجيل وقت النشاط
+        hour = timestamp.hour
+        self.patterns[user_id]['activity_times'].append(hour)
+        
+        # حفظ آخر التفاعلات (آخر 50)
+        self.patterns[user_id]['last_interactions'].append({
+            'type': message_type,
+            'content': content[:100],
+            'time': timestamp.isoformat()
+        })
+        
+        # الاحتفاظ بآخر 50 فقط
+        if len(self.patterns[user_id]['last_interactions']) > 50:
+            self.patterns[user_id]['last_interactions'] = \
+                self.patterns[user_id]['last_interactions'][-50:]
+        
+        self._save()
+    
+    def get_common_questions(self, user_id: int, limit: int = 5) -> List[Tuple[str, int]]:
+        """الحصول على الأسئلة الشائعة"""
+        if user_id not in self.patterns:
+            return []
+        
+        questions = self.patterns[user_id]['common_questions']
+        sorted_questions = sorted(questions.items(), key=lambda x: x[1], reverse=True)
+        return sorted_questions[:limit]
+    
+    def get_active_hours(self, user_id: int) -> List[int]:
+        """الحصول على ساعات النشاط"""
+        if user_id not in self.patterns:
+            return []
+        
+        times = self.patterns[user_id]['activity_times']
+        if not times:
+            return []
+        
+        # أكثر الساعات نشاطاً
+        from collections import Counter
+        hour_counts = Counter(times)
+        return [h for h, c in hour_counts.most_common(3)]
+    
+    def predict_next_question(self, user_id: int) -> Optional[str]:
+        """تنبؤ بالسؤال القادم"""
+        common = self.get_common_questions(user_id, 1)
+        if common and common[0][1] >= 3:  # سأل 3 مرات على الأقل
+            return common[0][0]
+        return None
+
+# ═══════════════════════════════════════════════════════════════
 # نظام Rate Limiting - حماية من Spam
 # ═══════════════════════════════════════════════════════════════
 
@@ -2490,6 +2830,11 @@ class FoxyBot(commands.Bot):
         self.memory_cleaner = MemoryCleaner(max_age_days=30)
         self.response_cache = ResponseCache(max_size=100, ttl_seconds=300)
         
+        # ✅ الأنظمة الذكية الجديدة - ADVANCED!
+        self.news_monitor = NewsMonitor(self)
+        self.smart_reminders = SmartReminders()
+        self.pattern_recognition = PatternRecognition()
+        
         # الإحصائيات
         self.stats = {
             'messages_received': 0,
@@ -2537,6 +2882,15 @@ class FoxyBot(commands.Bot):
         except Exception as e:
             logger.warning(f"Could not start reminders task: {e}")
         
+        # ✅ بدء المهام الذكية الجديدة
+        if not hasattr(self, 'news_monitor_task') or not self.news_monitor_task:
+            self.news_monitor_task = self.news_monitor_loop.start()
+            logger.info("✅ News monitor started")
+        
+        if not hasattr(self, 'reminders_task') or not self.reminders_task:
+            self.reminders_task = self.reminders_loop.start()
+            logger.info("✅ Reminders checker started")
+        
         logger.info("Bot setup complete!")
     
     async def on_ready(self):
@@ -2553,6 +2907,18 @@ class FoxyBot(commands.Bot):
             logger.info("✅ SmartConversation initialized with bot_user_id")
         
         logger.info(f"📊 Servers: {len(self.guilds)}")
+        
+        # ✅ إعداد مراقبة الأخبار
+        for guild in self.guilds:
+            for channel in guild.text_channels:
+                # البحث عن روم الأخبار
+                if 'اخبار' in channel.name.lower() or 'news' in channel.name.lower():
+                    self.news_monitor.add_monitored_channel(channel.id)
+                    logger.info(f"📡 Monitoring news channel: {channel.name}")
+        
+        # إضافة القائد لاستقبال التنبيهات
+        self.news_monitor.add_alert_user(LEADER_ID)
+        logger.info(f"🔔 Leader will receive news alerts")
         logger.info(f"👥 Users: {sum(g.member_count for g in self.guilds)}")
         
         # تهيئة معرفة السيرفر (التعديل 15)
@@ -2738,6 +3104,93 @@ class FoxyBot(commands.Bot):
                 except Exception as e:
                     logger.error(f"Recall error: {e}")
             
+            # ✅ إضافة تذكير
+            if any(word in message.content.lower() for word in ['ذكرني', 'تذكير', 'reminder']):
+                try:
+                    msg_lower = message.content.lower()
+                    
+                    # استخراج الوقت والرسالة
+                    import re
+                    
+                    # "ذكرني الساعة 5 أذاكر"
+                    time_match = re.search(r'الساعة (\d+)', msg_lower)
+                    
+                    if time_match:
+                        hour = int(time_match.group(1))
+                        
+                        # استخراج الرسالة
+                        msg_parts = message.content.split(time_match.group(0))
+                        reminder_msg = msg_parts[1].strip() if len(msg_parts) > 1 else "تذكير"
+                        
+                        # حساب الوقت
+                        now = datetime.datetime.now(TIMEZONE)
+                        remind_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+                        
+                        # إذا الوقت فات، خليه بكرة
+                        if remind_time <= now:
+                            remind_time += datetime.timedelta(days=1)
+                        
+                        # التكرار؟
+                        repeat = None
+                        if 'كل يوم' in msg_lower or 'يومي' in msg_lower:
+                            repeat = 'daily'
+                        elif 'كل جمعة' in msg_lower or 'أسبوعي' in msg_lower:
+                            repeat = 'weekly'
+                        
+                        # إضافة التذكير
+                        reminder_id = self.smart_reminders.add_reminder(
+                            message.author.id,
+                            reminder_msg,
+                            remind_time,
+                            repeat
+                        )
+                        
+                        title = "يا قائد!" if message.author.id == LEADER_ID else ""
+                        repeat_text = f" ({repeat})" if repeat else ""
+                        await message.reply(
+                            f"{title} تمام! راح أذكرك الساعة {hour:02d}:00{repeat_text} ⏰\n"
+                            f"الرسالة: {reminder_msg}\n"
+                            f"ID: `{reminder_id}`",
+                            mention_author=False
+                        )
+                        return
+                    else:
+                        title = "يا قائد!" if message.author.id == LEADER_ID else ""
+                        await message.reply(
+                            f"{title} استخدم: `فوكسي ذكرني الساعة 5 أذاكر`\n"
+                            f"أو: `فوكسي ذكرني الساعة 8 كل يوم صلاة الفجر`",
+                            mention_author=False
+                        )
+                        return
+                        
+                except Exception as e:
+                    logger.error(f"Reminder error: {e}")
+                    await message.reply("حصل خطأ! جرب مرة ثانية 😔", mention_author=False)
+                    return
+            
+            # ✅ قائمة التذكيرات
+            if any(word in message.content.lower() for word in ['تذكيراتي', 'قائمة التذكيرات', 'my reminders']):
+                try:
+                    reminders = self.smart_reminders.list_reminders(message.author.id)
+                    
+                    if reminders:
+                        title = "يا قائد!" if message.author.id == LEADER_ID else ""
+                        msg = f"{title} تذكيراتك:\n\n"
+                        
+                        for r in reminders:
+                            repeat_text = f" ({r['repeat']})" if r['repeat'] else ""
+                            msg += f"⏰ {r['time'].strftime('%H:%M')}{repeat_text}\n"
+                            msg += f"📝 {r['message']}\n"
+                            msg += f"🆔 `{r['id']}`\n\n"
+                        
+                        await message.reply(msg, mention_author=False)
+                    else:
+                        title = "يا قائد!" if message.author.id == LEADER_ID else ""
+                        await message.reply(f"{title} ما عندك تذكيرات! 📝", mention_author=False)
+                    return
+                except Exception as e:
+                    logger.error(f"List reminders error: {e}")
+            
             # ✅ طلب توليد صورة
             if any(word in message.content.lower() for word in ['اصنع صورة', 'سوي صورة', 'ارسم', 'صور', 'generate image', 'افرح']):
                 try:
@@ -2894,6 +3347,17 @@ class FoxyBot(commands.Bot):
                     except Exception as mem_err:
                         logger.error(f"Memory extraction error: {mem_err}")
                     
+                    # ✅ تسجيل نمط التفاعل
+                    try:
+                        self.pattern_recognition.record_interaction(
+                            message.author.id,
+                            'question' if '?' in message.content else 'statement',
+                            message.content,
+                            message.created_at
+                        )
+                    except Exception as pat_err:
+                        logger.error(f"Pattern recording error: {pat_err}")
+                    
                     # إحصائيات
                     self.stats['messages_sent'] += 1
         
@@ -2984,6 +3448,40 @@ class FoxyBot(commands.Bot):
             logger.info(f"✅ Cleanup complete: {mem_cleaned} memories, {conv_cleaned} conversations")
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
+    
+    @tasks.loop(minutes=5)
+    async def news_monitor_loop(self):
+        """مراقبة الأخبار كل 5 دقائق"""
+        try:
+            # فحص الأخبار الجديدة
+            news_items = await self.news_monitor.check_for_news()
+            
+            if news_items:
+                logger.info(f"📰 Found {len(news_items)} new items")
+                await self.news_monitor.send_alerts(news_items)
+        except Exception as e:
+            logger.error(f"News monitor error: {e}")
+    
+    @tasks.loop(minutes=1)
+    async def reminders_loop(self):
+        """فحص التذكيرات كل دقيقة"""
+        try:
+            # الحصول على التذكيرات المستحقة
+            due_reminders = self.smart_reminders.get_due_reminders()
+            
+            for user_id, reminder in due_reminders:
+                try:
+                    user = await self.fetch_user(user_id)
+                    if user:
+                        msg = f"⏰ **تذكير!**\n\n{reminder['message']}"
+                        if reminder['repeat']:
+                            msg += f"\n\n🔄 يتكرر: {reminder['repeat']}"
+                        await user.send(msg)
+                        logger.info(f"✅ Reminder sent to {user_id}")
+                except Exception as e:
+                    logger.error(f"Error sending reminder to {user_id}: {e}")
+        except Exception as e:
+            logger.error(f"Reminders loop error: {e}")
     
     async def close(self):
         """إغلاق البوت"""
