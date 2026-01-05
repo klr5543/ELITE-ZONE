@@ -2890,9 +2890,9 @@ class FoxyBot(commands.Bot):
             logger.warning(f"Could not start reminders task: {e}")
         
         # ✅ بدء المهام الذكية الجديدة
-        if not hasattr(self, 'news_monitor_task') or not self.news_monitor_task:
-            self.news_monitor_task = self.news_monitor_loop.start()
-            logger.info("✅ News monitor started")
+        # News Monitor: مطفي - يشتغل فقط على الطلب!
+        # لو تبي تفعله تلقائياً، شيل التعليق من السطر التالي:
+        # self.news_monitor_task = self.news_monitor_loop.start()
         
         if not hasattr(self, 'reminders_task') or not self.reminders_task:
             self.reminders_task = self.reminders_loop.start()
@@ -2960,17 +2960,10 @@ class FoxyBot(commands.Bot):
         
         logger.info(f"📊 Servers: {len(self.guilds)}")
         
-        # ✅ إعداد مراقبة الأخبار
-        for guild in self.guilds:
-            for channel in guild.text_channels:
-                # البحث عن روم الأخبار
-                if 'اخبار' in channel.name.lower() or 'news' in channel.name.lower():
-                    self.news_monitor.add_monitored_channel(channel.id)
-                    logger.info(f"📡 Monitoring news channel: {channel.name}")
+        # مراقبة الأخبار: متاحة على الطلب فقط!
+        # البوت يقرأ روم الأخبار لما تطلب "فوكسي ادخل روم اخبار"
+        logger.info("📰 News monitoring: Manual mode (on-demand only)")
         
-        # إضافة القائد لاستقبال التنبيهات
-        self.news_monitor.add_alert_user(LEADER_ID)
-        logger.info(f"🔔 Leader will receive news alerts")
         logger.info(f"👥 Users: {sum(g.member_count for g in self.guilds)}")
         
         # تهيئة معرفة السيرفر (التعديل 15)
