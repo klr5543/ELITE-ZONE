@@ -95,6 +95,10 @@ VICE_LEADER_1_NAME = "NED"
 VICE_LEADER_2 = 752385530876002414  # ID النائب الثاني
 VICE_LEADER_2_NAME = "سنيور"
 
+# 🔒 حماية السيرفر - Server Lock
+ALLOWED_SERVER_ID = 806258486090268733  # سيرفر SPECTRE - محمي!
+# البوت سيعمل فقط في هذا السيرفر!
+
 # معلومات البوت
 BOT_NAME = "فوكسي"
 BOT_NAME_EN = "Foxy"
@@ -2897,6 +2901,51 @@ class FoxyBot(commands.Bot):
         """عند جاهزية البوت"""
         logger.info(f"✅ {self.user} is ready!")
         
+        # 🔒 فحص Server Lock
+        if ALLOWED_SERVER_ID is not None:
+            allowed_guilds = [g for g in self.guilds if g.id == ALLOWED_SERVER_ID]
+            
+            if not allowed_guilds:
+                logger.error("="*60)
+                logger.error("🚨 SERVER LOCK ACTIVATED!")
+                logger.error(f"❌ البوت غير مسموح في هذا السيرفر!")
+                logger.error(f"✅ السيرفر المسموح: {ALLOWED_SERVER_ID}")
+                logger.error(f"❌ السيرفرات الحالية: {[g.id for g in self.guilds]}")
+                logger.error("🔒 البوت سيغلق الآن...")
+                logger.error("="*60)
+                
+                # إرسال رسالة للقائد
+                try:
+                    leader = await self.fetch_user(LEADER_ID)
+                    if leader:
+                        await leader.send(
+                            "🚨 **تنبيه أمني!**\n\n"
+                            "تم محاولة تشغيل البوت في سيرفر غير مسموح!\n"
+                            f"السيرفر المسموح: `{ALLOWED_SERVER_ID}`\n"
+                            f"السيرفرات المكتشفة: `{[g.id for g in self.guilds]}`\n\n"
+                            "البوت تم إيقافه تلقائياً. 🔒"
+                        )
+                except:
+                    pass
+                
+                # مغادرة السيرفرات غير المسموحة
+                for guild in self.guilds:
+                    if guild.id != ALLOWED_SERVER_ID:
+                        try:
+                            await guild.leave()
+                            logger.info(f"⚠️ Left unauthorized server: {guild.name} ({guild.id})")
+                        except:
+                            pass
+                
+                # إغلاق البوت
+                await self.close()
+                return
+            else:
+                logger.info("="*60)
+                logger.info("🔒 SERVER LOCK: ✅ VERIFIED")
+                logger.info(f"✅ السيرفر الحالي مسموح: {allowed_guilds[0].name}")
+                logger.info("="*60)
+        
         # تهيئة نظام المحادثة (التعديل 1 - إصلاح Reply)
         if not self.conversation_system:
             self.conversation_system = SmartConversation(
@@ -2956,6 +3005,46 @@ class FoxyBot(commands.Bot):
         print(f"👑 القائد: {LEADER_NAME} (ID: {LEADER_ID})")
         print(f"⭐ النواب: {VICE_LEADER_1_NAME}, {VICE_LEADER_2_NAME}")
         print("="*60 + "\n")
+    
+    async def on_guild_join(self, guild: discord.Guild):
+        """🔒 فحص السيرفر عند الانضمام الجديد"""
+        
+        # إذا Server Lock مفعّل
+        if ALLOWED_SERVER_ID is not None:
+            if guild.id != ALLOWED_SERVER_ID:
+                logger.warning("="*60)
+                logger.warning("🚨 UNAUTHORIZED SERVER DETECTED!")
+                logger.warning(f"❌ السيرفر: {guild.name} (ID: {guild.id})")
+                logger.warning(f"✅ السيرفر المسموح فقط: {ALLOWED_SERVER_ID}")
+                logger.warning("🔒 سيتم المغادرة تلقائياً...")
+                logger.warning("="*60)
+                
+                # إرسال رسالة للقائد
+                try:
+                    leader = await self.fetch_user(LEADER_ID)
+                    if leader:
+                        await leader.send(
+                            "🚨 **تنبيه أمني!**\n\n"
+                            f"تمت محاولة إضافة البوت لسيرفر غير مسموح:\n"
+                            f"📌 اسم السيرفر: **{guild.name}**\n"
+                            f"🆔 Server ID: `{guild.id}`\n"
+                            f"👥 الأعضاء: {guild.member_count}\n\n"
+                            "تم المغادرة تلقائياً. 🔒"
+                        )
+                except Exception as e:
+                    logger.error(f"Error notifying leader: {e}")
+                
+                # المغادرة فوراً
+                try:
+                    await guild.leave()
+                    logger.info(f"✅ Left unauthorized server: {guild.name}")
+                except Exception as e:
+                    logger.error(f"Error leaving guild: {e}")
+            else:
+                logger.info(f"✅ Joined authorized server: {guild.name}")
+        else:
+            # Server Lock غير مفعّل
+            logger.info(f"📥 Joined new server: {guild.name} (ID: {guild.id})")
     
     async def on_message(self, message: discord.Message):
         """معالجة الرسائل مع جميع التعديلات"""
