@@ -1905,29 +1905,54 @@ class UpdatesSystem:
 # ═══════════════════════════════════════════════════════════════
 
 class ChannelReader:
-    """نظام ذكي لقراءة وفهم محتوى الرومات"""
+    """نظام ذكي لقراءة وفهم محتوى الرومات + الصور!"""
     
     def __init__(self, bot):
         self.bot = bot
         self.cache = {}
         self.cache_duration = 300
         
-    async def read_channel(self, channel: discord.TextChannel, limit: int = 10) -> Dict:
-        """قراءة آخر رسائل من روم"""
+    async def read_channel(self, channel: discord.TextChannel, limit: int = 10, read_images: bool = True) -> Dict:
+        """قراءة آخر رسائل من روم + الصور!"""
         try:
             messages = []
+            images_content = []
+            
             async for msg in channel.history(limit=limit):
-                messages.append({
+                msg_data = {
                     'author': msg.author.name,
                     'content': msg.content,
                     'time': msg.created_at.strftime('%Y-%m-%d %H:%M'),
                     'has_attachments': len(msg.attachments) > 0
-                })
+                }
+                
+                # قراءة الصور إذا مطلوب
+                if read_images and msg.attachments:
+                    for attachment in msg.attachments[:2]:  # أول صورتين فقط
+                        if attachment.content_type and 'image' in attachment.content_type:
+                            try:
+                                # تحميل الصورة
+                                image_data = await attachment.read()
+                                
+                                # قراءة الصورة بـ Claude Vision
+                                if self.bot.ai_engine:
+                                    description = await self.bot.ai_engine.read_image(image_data, attachment.content_type)
+                                    if description:
+                                        images_content.append({
+                                            'time': msg.created_at.strftime('%Y-%m-%d %H:%M'),
+                                            'description': description[:200]  # أول 200 حرف
+                                        })
+                                        msg_data['image_description'] = description[:200]
+                            except Exception as e:
+                                logger.error(f"Error reading image: {e}")
+                
+                messages.append(msg_data)
             
             return {
                 'channel_name': channel.name,
                 'message_count': len(messages),
                 'messages': messages,
+                'images_content': images_content,
                 'last_update': datetime.datetime.now().isoformat()
             }
         except Exception as e:
@@ -1955,16 +1980,31 @@ class ChannelReader:
         return None
     
     def summarize_messages(self, channel_data: Dict) -> str:
-        """تلخيص ذكي"""
-        if not channel_data or not channel_data.get('messages'):
+        """تلخيص ذكي مع الصور!"""
+        if not channel_data:
             return "الروم فارغ."
         
-        messages = channel_data['messages'][:3]
-        summary = f"📋 آخر رسائل:\n\n"
+        messages = channel_data.get('messages', [])
+        images = channel_data.get('images_content', [])
         
-        for i, msg in enumerate(messages, 1):
-            content = msg['content'][:80]
-            summary += f"{i}. {msg['author']}: {content}\n"
+        if not messages and not images:
+            return "الروم فارغ."
+        
+        summary = f"📋 آخر محتوى في {channel_data['channel_name']}:\n\n"
+        
+        # الصور أولاً (الأهم!)
+        if images:
+            summary += "🖼️ **الصور:**\n"
+            for i, img in enumerate(images[:3], 1):
+                summary += f"{i}. {img['description']}\n\n"
+        
+        # النصوص
+        text_messages = [m for m in messages[:3] if m.get('content')]
+        if text_messages:
+            summary += "💬 **رسائل:**\n"
+            for i, msg in enumerate(text_messages[:2], 1):
+                content = msg['content'][:80]
+                summary += f"{i}. {msg['author']}: {content}\n"
         
         return summary.strip()
 
@@ -2461,8 +2501,8 @@ class FoxyBot(commands.Bot):
                             await message.reply(f"يا قائد! ما لقيت روم اسمه '{channel_name}' 🔍", mention_author=False)
                             return
                         
-                        # قراءة الروم
-                        channel_data = await self.channel_reader.read_channel(channel, limit=10)
+                        # قراءة الروم مع الصور!
+                        channel_data = await self.channel_reader.read_channel(channel, limit=10, read_images=True)
                         
                         if not channel_data:
                             await message.reply("يا قائد! ما قدرت أقرأ الروم! ❌", mention_author=False)
