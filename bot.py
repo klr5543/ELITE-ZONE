@@ -594,6 +594,20 @@ class AdvancedAI:
             else:
                 media_type = "image/jpeg"  # default
             
+            return await self.read_image_base64(image_base64, media_type)
+                    
+        except Exception as e:
+            logger.error(f"Claude Vision exception: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
+    
+    async def read_image_base64(self, image_base64: str, media_type: str = "image/jpeg") -> Optional[str]:
+        """قراءة صورة من base64 مباشرة - NEW!"""
+        if not self.claude_key:
+            logger.warning("❌ Claude key not available for image reading")
+            return None
+        
+        try:
             headers = {
                 'x-api-key': self.claude_key,
                 'anthropic-version': '2023-06-01',
@@ -601,7 +615,7 @@ class AdvancedAI:
             }
             
             data = {
-                'model': 'claude-3-5-sonnet-20241022',  # ✅ أحدث موديل
+                'model': 'claude-3-5-sonnet-20241022',
                 'max_tokens': 500,
                 'messages': [{
                     'role': 'user',
@@ -609,7 +623,7 @@ class AdvancedAI:
                         {
                             'type': 'image',
                             'source': {
-                                'type': 'base64',  # ✅ استخدام base64
+                                'type': 'base64',
                                 'media_type': media_type,
                                 'data': image_base64
                             }
@@ -639,8 +653,7 @@ class AdvancedAI:
                     return None
                     
         except Exception as e:
-            logger.error(f"Claude Vision exception: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error(f"Claude Vision base64 exception: {str(e)}")
             return None
     
     def check_content(self, text: str) -> Tuple[bool, str]:
@@ -1901,7 +1914,151 @@ class UpdatesSystem:
         return results[:10]
 
 # ═══════════════════════════════════════════════════════════════
-# نظام قراءة الرومات الذكي - NEW!
+# نظام Rate Limiting - حماية من Spam
+# ═══════════════════════════════════════════════════════════════
+
+class RateLimiter:
+    """حماية من spam attacks"""
+    
+    def __init__(self, max_requests: int = 5, window_seconds: int = 10):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.requests = defaultdict(deque)
+    
+    def is_rate_limited(self, user_id: int) -> bool:
+        """تحقق من rate limit"""
+        now = time.time()
+        user_requests = self.requests[user_id]
+        
+        # تنظيف الطلبات القديمة
+        while user_requests and user_requests[0] < now - self.window_seconds:
+            user_requests.popleft()
+        
+        # تحقق من الحد
+        if len(user_requests) >= self.max_requests:
+            return True
+        
+        # إضافة الطلب الجديد
+        user_requests.append(now)
+        return False
+    
+    def get_remaining_time(self, user_id: int) -> int:
+        """الوقت المتبقي لإزالة rate limit"""
+        if not self.requests[user_id]:
+            return 0
+        
+        oldest = self.requests[user_id][0]
+        elapsed = time.time() - oldest
+        remaining = self.window_seconds - elapsed
+        
+        return max(0, int(remaining))
+
+# ═══════════════════════════════════════════════════════════════
+# نظام Memory Cleanup - تنظيف تلقائي
+# ═══════════════════════════════════════════════════════════════
+
+class MemoryCleaner:
+    """تنظيف تلقائي للذاكرة"""
+    
+    def __init__(self, max_age_days: int = 30):
+        self.max_age_days = max_age_days
+    
+    def cleanup_old_memories(self, memory_system: 'SmartMemory') -> int:
+        """حذف memories أقدم من max_age_days"""
+        if not memory_system or not memory_system.memories:
+            return 0
+        
+        cutoff_date = datetime.datetime.now() - datetime.timedelta(days=self.max_age_days)
+        deleted_count = 0
+        
+        for user_id in list(memory_system.memories.keys()):
+            user_memories = memory_system.memories[user_id]
+            
+            for key in list(user_memories.keys()):
+                mem_time_str = user_memories[key].get('time')
+                if mem_time_str:
+                    try:
+                        mem_time = datetime.datetime.fromisoformat(mem_time_str)
+                        if mem_time < cutoff_date:
+                            del user_memories[key]
+                            deleted_count += 1
+                    except:
+                        pass
+            
+            # حذف المستخدم إذا ما عنده memories
+            if not user_memories:
+                del memory_system.memories[user_id]
+        
+        if deleted_count > 0:
+            memory_system._save()
+            logger.info(f"🧹 Cleaned {deleted_count} old memories")
+        
+        return deleted_count
+    
+    def cleanup_old_conversations(self, user_manager: 'UserManager', max_messages: int = 50) -> int:
+        """تنظيف المحادثات القديمة"""
+        if not user_manager or not user_manager.conversations:
+            return 0
+        
+        cleaned_count = 0
+        
+        for user_id, conversation in user_manager.conversations.items():
+            if hasattr(conversation, 'history') and len(conversation.history) > max_messages:
+                # حفظ آخر max_messages فقط
+                conversation.history = conversation.history[-max_messages:]
+                cleaned_count += 1
+        
+        if cleaned_count > 0:
+            logger.info(f"🧹 Cleaned {cleaned_count} conversation histories")
+        
+        return cleaned_count
+
+# ═══════════════════════════════════════════════════════════════
+# نظام Response Caching - للسرعة
+# ═══════════════════════════════════════════════════════════════
+
+class ResponseCache:
+    """تخزين مؤقت للردود المتكررة"""
+    
+    def __init__(self, max_size: int = 100, ttl_seconds: int = 300):
+        self.cache = {}
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+    
+    def _make_key(self, question: str, user_id: int) -> str:
+        """إنشاء مفتاح للكاش"""
+        normalized = question.lower().strip()
+        return hashlib.md5(f"{normalized}:{user_id}".encode()).hexdigest()
+    
+    def get(self, question: str, user_id: int) -> Optional[str]:
+        """الحصول من الكاش"""
+        key = self._make_key(question, user_id)
+        
+        if key in self.cache:
+            cached_data = self.cache[key]
+            if time.time() - cached_data['time'] < self.ttl_seconds:
+                logger.info(f"💾 Cache hit for user {user_id}")
+                return cached_data['response']
+            else:
+                del self.cache[key]
+        
+        return None
+    
+    def set(self, question: str, user_id: int, response: str):
+        """حفظ في الكاش"""
+        if len(self.cache) >= self.max_size:
+            # حذف أقدم عنصر
+            oldest_key = min(self.cache.keys(), key=lambda k: self.cache[k]['time'])
+            del self.cache[oldest_key]
+        
+        key = self._make_key(question, user_id)
+        self.cache[key] = {
+            'response': response,
+            'time': time.time()
+        }
+
+# ═══════════════════════════════════════════════════════════════
+# نظام قراءة الرومات الذكي - مع الإصلاحات
 # ═══════════════════════════════════════════════════════════════
 
 class ChannelReader:
@@ -1934,13 +2091,20 @@ class ChannelReader:
                                 # تحميل الصورة
                                 image_data = await attachment.read()
                                 
+                                # ✅ FIX: تحويل لـ base64 أولاً
+                                image_base64 = base64.b64encode(image_data).decode('utf-8')
+                                
                                 # قراءة الصورة بـ Claude Vision
-                                if self.bot.ai_engine:
-                                    description = await self.bot.ai_engine.read_image(image_data, attachment.content_type)
+                                if hasattr(self.bot, 'ai_engine') and self.bot.ai_engine:
+                                    # استخدام read_image_base64 بدلاً من read_image
+                                    description = await self.bot.ai_engine.read_image_base64(
+                                        image_base64, 
+                                        attachment.content_type
+                                    )
                                     if description:
                                         images_content.append({
                                             'time': msg.created_at.strftime('%Y-%m-%d %H:%M'),
-                                            'description': description[:200]  # أول 200 حرف
+                                            'description': description[:200]
                                         })
                                         msg_data['image_description'] = description[:200]
                             except Exception as e:
@@ -1956,7 +2120,7 @@ class ChannelReader:
                 'last_update': datetime.datetime.now().isoformat()
             }
         except Exception as e:
-            logger.error(f"Error reading channel: {e}")
+            logger.error(f"Error reading channel {channel.name}: {e}")
             return None
     
     async def find_channel(self, guild: discord.Guild, query: str) -> Optional[discord.TextChannel]:
@@ -2321,6 +2485,11 @@ class FoxyBot(commands.Bot):
         self.channel_reader = ChannelReader(self)
         self.smart_memory = SmartMemory()
         
+        # ✅ الأنظمة المحسّنة - PROTECTION & PERFORMANCE!
+        self.rate_limiter = RateLimiter(max_requests=5, window_seconds=10)
+        self.memory_cleaner = MemoryCleaner(max_age_days=30)
+        self.response_cache = ResponseCache(max_size=100, ttl_seconds=300)
+        
         # الإحصائيات
         self.stats = {
             'messages_received': 0,
@@ -2427,6 +2596,20 @@ class FoxyBot(commands.Bot):
         
         # تجاهل رسائل البوت نفسه
         if message.author == self.user:
+            return
+        
+        # ✅ Rate Limiting - حماية من spam
+        if self.rate_limiter.is_rate_limited(message.author.id):
+            remaining = self.rate_limiter.get_remaining_time(message.author.id)
+            if remaining > 0:
+                try:
+                    await message.reply(
+                        f"⏱️ استرخي شوي! انتظر {remaining} ثانية...",
+                        mention_author=False,
+                        delete_after=5
+                    )
+                except:
+                    pass
             return
         
         # ✅ التعديل 11: تجاهل المحظورين
@@ -2716,6 +2899,7 @@ class FoxyBot(commands.Bot):
         
         except Exception as e:
             logger.error(f"Error in on_message: {e}")
+            logger.error(f"User: {message.author.id} | Message: {message.content[:100]}")
             logger.error(traceback.format_exc())
             self.stats['errors'] += 1
         
@@ -2785,6 +2969,22 @@ class FoxyBot(commands.Bot):
         except Exception as e:
             logger.error(f"Save error: {e}")
     
+    @tasks.loop(hours=24)
+    async def cleanup_loop(self):
+        """تنظيف يومي - حذف البيانات القديمة"""
+        try:
+            logger.info("🧹 Running daily cleanup...")
+            
+            # تنظيف الذاكرة
+            mem_cleaned = self.memory_cleaner.cleanup_old_memories(self.smart_memory)
+            
+            # تنظيف المحادثات
+            conv_cleaned = self.memory_cleaner.cleanup_old_conversations(self.user_manager)
+            
+            logger.info(f"✅ Cleanup complete: {mem_cleaned} memories, {conv_cleaned} conversations")
+        except Exception as e:
+            logger.error(f"Cleanup error: {e}")
+    
     async def close(self):
         """إغلاق البوت"""
         logger.info("Shutting down...")
@@ -2796,6 +2996,8 @@ class FoxyBot(commands.Bot):
             self.save_task.cancel()
         if self.updates_monitor_task:
             self.updates_monitor_task.cancel()
+        if hasattr(self, 'cleanup_loop'):
+            self.cleanup_loop.cancel()
         
         # حفظ البيانات
         self.user_manager.save_data()
