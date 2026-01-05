@@ -761,7 +761,7 @@ class AdvancedAI:
         return response
     
     def _build_system_prompt(self, user_profile: UserProfile, context: Dict) -> str:
-        """SMART FOCUSED PROMPT - ذكي ومركز"""
+        """SMART FOCUSED PROMPT - ذكي ومركز + قراءة الرومات + ذاكرة"""
         
         now = datetime.datetime.now(TIMEZONE)
         is_leader = user_profile.user_id == LEADER_ID
@@ -769,8 +769,16 @@ class AdvancedAI:
         
         # Server info from context
         server_members = context.get('server_members', '1258')
-        current_date = now.strftime('%A, %d %B %Y')  # e.g., "Sunday, 05 January 2026"
-        current_time = now.strftime('%I:%M %p')  # e.g., "10:30 AM"
+        current_date = now.strftime('%A, %d %B %Y')
+        current_time = now.strftime('%I:%M %p')
+        channel_messages = context.get('channel_messages', None)
+        
+        # Memory info
+        user_memories = context.get('user_memories', None)
+        memory_context = ""
+        if user_memories:
+            memory_items = [f"- {k}: {v}" for k, v in user_memories.items()]
+            memory_context = f"\n\n🧠 معلومات محفوظة عن هذا المستخدم:\n" + "\n".join(memory_items) + "\n"
         
         # Determine title
         if is_leader:
@@ -783,6 +791,11 @@ class AdvancedAI:
             title = ""
             user_type = "👤 عضو"
         
+        # Add channel context if available
+        channel_context = ""
+        if channel_messages:
+            channel_context = f"\n\n📱 معلومات من الروم:\n{channel_messages}\n"
+        
         prompt = f"""أنت فوكسي 🦊 - بوت ذكي لسيرفر SPECTRE Discord.
 
 📍 المعلومات الحقيقية (استخدمها!):
@@ -790,31 +803,30 @@ class AdvancedAI:
 - الساعة الآن: {current_time}
 - عدد أعضاء السيرفر: {server_members}
 - السيرفر: SPECTRE (للعبة One Piece Bounty Rush)
-
+{channel_context}{memory_context}
 👤 المستخدم الحالي: {user_type}
 {f'✅ قل "{title}" في كل رد!' if title else '❌ لا تستخدم ألقاب!'}
 
 🎯 أسلوب الرد:
-- **مباشر**: اجب على السؤال فقط، بدون زيادة
+- **مباشر**: اجب على السؤال فقط
 - **قصير**: 1-2 جملة كافية
-- **ذكي**: استخدم المعلومات الحقيقية فوق
-- **طبيعي**: رد زي إنسان عادي
+- **ذكي**: استخدم المعلومات الحقيقية
+- **شخصي**: استخدم المعلومات المحفوظة (🧠) لو موجودة
 
 ✅ أمثلة صحيحة:
 سؤال: "وش اليوم؟"
 رد: {f'{title}! ' if title else ''}اليوم {current_date.split(',')[0]} 📅
 
-سؤال: "كم عضو؟"
-رد: {f'{title}! ' if title else ''}عندنا {server_members} عضو 👥
+سؤال: "وش في روم الأخبار؟"
+رد: {f'{title}! ' if title else ''}[استخدم المعلومات من 📱]
 
 ❌ ممنوع:
 - الردود الطويلة
-- ذكر One Piece بدون سبب
 - التشتت عن السؤال
-- الترجمة الحرفية
+- قول "ما أقدر" لو عندك المعلومات!
 
 🧠 القاعدة الذهبية:
-فهم السؤال → رد مباشر → خلاص!"""
+فهم السؤال → استخدم المعلومات الحقيقية → رد مباشر!"""
         
         return prompt
     
@@ -1889,6 +1901,143 @@ class UpdatesSystem:
         return results[:10]
 
 # ═══════════════════════════════════════════════════════════════
+# نظام قراءة الرومات الذكي - NEW!
+# ═══════════════════════════════════════════════════════════════
+
+class ChannelReader:
+    """نظام ذكي لقراءة وفهم محتوى الرومات"""
+    
+    def __init__(self, bot):
+        self.bot = bot
+        self.cache = {}
+        self.cache_duration = 300
+        
+    async def read_channel(self, channel: discord.TextChannel, limit: int = 10) -> Dict:
+        """قراءة آخر رسائل من روم"""
+        try:
+            messages = []
+            async for msg in channel.history(limit=limit):
+                messages.append({
+                    'author': msg.author.name,
+                    'content': msg.content,
+                    'time': msg.created_at.strftime('%Y-%m-%d %H:%M'),
+                    'has_attachments': len(msg.attachments) > 0
+                })
+            
+            return {
+                'channel_name': channel.name,
+                'message_count': len(messages),
+                'messages': messages,
+                'last_update': datetime.datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Error reading channel: {e}")
+            return None
+    
+    async def find_channel(self, guild: discord.Guild, query: str) -> Optional[discord.TextChannel]:
+        """البحث عن روم بالاسم"""
+        query = query.lower().strip()
+        
+        # تنظيف الاستعلام
+        for char in ['⁠', '么', '︙', '📃', '・', '𝐎', '𝐏', '𝐁', '𝐑']:
+            query = query.replace(char, '')
+        query = query.replace('opbr', '').strip()
+        
+        # البحث
+        for channel in guild.text_channels:
+            name_clean = channel.name.lower()
+            for char in ['么', '︙', '・']:
+                name_clean = name_clean.replace(char, '')
+            
+            if query in name_clean or name_clean in query:
+                return channel
+        
+        return None
+    
+    def summarize_messages(self, channel_data: Dict) -> str:
+        """تلخيص ذكي"""
+        if not channel_data or not channel_data.get('messages'):
+            return "الروم فارغ."
+        
+        messages = channel_data['messages'][:3]
+        summary = f"📋 آخر رسائل:\n\n"
+        
+        for i, msg in enumerate(messages, 1):
+            content = msg['content'][:80]
+            summary += f"{i}. {msg['author']}: {content}\n"
+        
+        return summary.strip()
+
+# ═══════════════════════════════════════════════════════════════
+# نظام الذاكرة الذكية - NEW!
+# ═══════════════════════════════════════════════════════════════
+
+class SmartMemory:
+    """نظام ذكي لحفظ المعلومات"""
+    
+    def __init__(self):
+        self.memory_file = 'smart_memory.json'
+        self.memories = self._load()
+        
+    def _load(self) -> Dict:
+        try:
+            if os.path.exists(self.memory_file):
+                with open(self.memory_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except:
+            pass
+        return {}
+    
+    def _save(self):
+        try:
+            with open(self.memory_file, 'w', encoding='utf-8') as f:
+                json.dump(self.memories, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Memory save error: {e}")
+    
+    def remember(self, user_id: str, key: str, value: str):
+        """حفظ معلومة"""
+        if user_id not in self.memories:
+            self.memories[user_id] = {}
+        
+        self.memories[user_id][key] = {
+            'value': value,
+            'time': datetime.datetime.now().isoformat()
+        }
+        self._save()
+    
+    def recall(self, user_id: str, key: str = None) -> Any:
+        """استرجاع"""
+        if user_id not in self.memories:
+            return None
+        if key:
+            return self.memories[user_id].get(key, {}).get('value')
+        return {k: v['value'] for k, v in self.memories[user_id].items()}
+    
+    def auto_extract(self, user_id: str, message: str) -> List[str]:
+        """استخراج تلقائي"""
+        saved = []
+        msg = message.lower()
+        
+        # علاقات
+        if 'صديقي' in msg or 'صاحبي' in msg:
+            words = message.split()
+            for i, word in enumerate(words):
+                if word in ['صديقي', 'صاحبي'] and i > 0:
+                    self.remember(user_id, 'friend', words[i-1])
+                    saved.append('friend')
+        
+        # تفضيلات
+        if 'أحب' in msg or 'أفضل' in msg:
+            words = message.split()
+            for i, word in enumerate(words):
+                if word in ['أحب', 'أفضل'] and i < len(words) - 1:
+                    self.remember(user_id, 'favorite', words[i+1])
+                    saved.append('favorite')
+        
+        return saved
+
+# ═══════════════════════════════════════════════════════════════
 # نظام المحادثة الذكي مع التعديلات
 # ═══════════════════════════════════════════════════════════════
 
@@ -2123,10 +2272,14 @@ class FoxyBot(commands.Bot):
         self.ai_engine = AdvancedAI()
         self.user_manager = UserManager()
         self.conversation_system = None
-        self.block_system = BlockSystem()  # ✅ نظام الحظر (التعديل 11)
-        self.auto_moderation = AutoModeration()  # ✅ الإشراف التلقائي (التعديل 22)
-        self.updates_system = UpdatesSystem()  # ✅ نظام التحديثات (التعديل 14)
-        self.server_knowledge = None  # سيتم تهيئته في on_ready
+        self.block_system = BlockSystem()
+        self.auto_moderation = AutoModeration()
+        self.updates_system = UpdatesSystem()
+        self.server_knowledge = None
+        
+        # ✅ الأنظمة الجديدة - SMART!
+        self.channel_reader = ChannelReader(self)
+        self.smart_memory = SmartMemory()
         
         # الإحصائيات
         self.stats = {
@@ -2280,6 +2433,88 @@ class FoxyBot(commands.Bot):
         # ✅ نظام الأوامر الطبيعية (جديد!) 🔥
         # ═══════════════════════════════════════════════════════════════
         if any(word in message.content.lower() for word in ['فوكسي', 'foxy']):
+            
+            # ✅ طلب قراءة روم
+            if any(word in message.content.lower() for word in ['ادخل', 'اقرا', 'شوف', 'روم', 'قناة', 'channel']):
+                try:
+                    async with message.channel.typing():
+                        # استخراج اسم الروم
+                        msg_lower = message.content.lower()
+                        channel_name = None
+                        
+                        # محاولة استخراج اسم الروم
+                        for word in ['روم', 'قناة', 'ادخل', 'اقرا', 'شوف']:
+                            if word in msg_lower:
+                                parts = message.content.split(word)
+                                if len(parts) > 1:
+                                    channel_name = parts[1].strip()
+                                    break
+                        
+                        if not channel_name or len(channel_name) < 2:
+                            await message.reply("يا قائد! وش اسم الروم؟ 📋", mention_author=False)
+                            return
+                        
+                        # البحث عن الروم
+                        channel = await self.channel_reader.find_channel(message.guild, channel_name)
+                        
+                        if not channel:
+                            await message.reply(f"يا قائد! ما لقيت روم اسمه '{channel_name}' 🔍", mention_author=False)
+                            return
+                        
+                        # قراءة الروم
+                        channel_data = await self.channel_reader.read_channel(channel, limit=10)
+                        
+                        if not channel_data:
+                            await message.reply("يا قائد! ما قدرت أقرأ الروم! ❌", mention_author=False)
+                            return
+                        
+                        # تلخيص
+                        summary = self.channel_reader.summarize_messages(channel_data)
+                        
+                        # إرسال
+                        embed = discord.Embed(
+                            title=f"📋 روم: {channel.name}",
+                            description=summary,
+                            color=discord.Color.blue()
+                        )
+                        embed.set_footer(text=f"آخر {channel_data['message_count']} رسائل")
+                        
+                        await message.reply(embed=embed, mention_author=False)
+                        return
+                        
+                except Exception as e:
+                    logger.error(f"Channel reading error: {e}")
+                    await message.reply("يا قائد! صار خطأ في قراءة الروم! 😔", mention_author=False)
+                    return
+            
+            # ✅ حفظ معلومة في الذاكرة
+            if any(word in message.content.lower() for word in ['اتذكر', 'احفظ', 'remember']):
+                try:
+                    # استخراج تلقائي
+                    saved = self.smart_memory.auto_extract(str(message.author.id), message.content)
+                    
+                    if saved:
+                        await message.reply(f"يا قائد! حفظت المعلومة! ✅ ({', '.join(saved)})", mention_author=False)
+                    else:
+                        await message.reply("يا قائد! وش تبيني أحفظ؟ 🤔", mention_author=False)
+                    return
+                except Exception as e:
+                    logger.error(f"Memory error: {e}")
+            
+            # ✅ استرجاع من الذاكرة
+            if any(word in message.content.lower() for word in ['وش تعرف عني', 'معلوماتي', 'تذكر']):
+                try:
+                    memories = self.smart_memory.recall(str(message.author.id))
+                    
+                    if memories:
+                        info = "\n".join([f"• {k}: {v}" for k, v in memories.items()])
+                        await message.reply(f"يا قائد! هذا اللي أعرفه عنك:\n{info}", mention_author=False)
+                    else:
+                        await message.reply("يا قائد! ما عندي معلومات محفوظة عنك! 📝", mention_author=False)
+                    return
+                except Exception as e:
+                    logger.error(f"Recall error: {e}")
+            
             # ✅ طلب توليد صورة
             if any(word in message.content.lower() for word in ['اصنع صورة', 'سوي صورة', 'ارسم', 'صور', 'generate image', 'افرح']):
                 try:
@@ -2367,11 +2602,41 @@ class FoxyBot(commands.Bot):
                     # تأخير طبيعي
                     await asyncio.sleep(random.uniform(0.5, 1.5))
                     
-                    # توليد الرد مع معلومات السيرفر الحقيقية
+                    # قراءة الروم إذا كان السؤال عنه
+                    channel_messages = None
+                    msg_lower = message.content.lower()
+                    
+                    # كشف طلب قراءة روم
+                    if any(word in msg_lower for word in ['روم', 'قناة', 'channel', 'ادخل', 'شوف', 'اقرا']):
+                        # محاولة إيجاد اسم الروم
+                        if message.guild:
+                            for channel in message.guild.text_channels:
+                                if channel.name.lower() in msg_lower or any(part in msg_lower for part in channel.name.lower().split('-')):
+                                    try:
+                                        # قراءة آخر 10 رسائل من الروم
+                                        messages_text = []
+                                        async for msg in channel.history(limit=10):
+                                            if msg.content:
+                                                messages_text.append(f"- {msg.author.display_name}: {msg.content[:100]}")
+                                        
+                                        if messages_text:
+                                            channel_messages = f"آخر رسائل من #{channel.name}:\n" + "\n".join(messages_text[:5])
+                                            logger.info(f"✅ Read {len(messages_text)} messages from #{channel.name}")
+                                        break
+                                    except discord.Forbidden:
+                                        logger.warning(f"❌ No permission to read #{channel.name}")
+                                    except Exception as e:
+                                        logger.error(f"Error reading channel: {e}")
+                    
+                    # توليد الرد مع معلومات السيرفر الحقيقية + الذاكرة
+                    user_memories = self.smart_memory.recall(str(message.author.id))
+                    
                     server_context = {
                         'server_members': message.guild.member_count if message.guild else '0',
                         'server_name': message.guild.name if message.guild else 'Unknown',
-                        'message_context': context.value if hasattr(context, 'value') else 'general'
+                        'message_context': context.value if hasattr(context, 'value') else 'general',
+                        'channel_messages': channel_messages,
+                        'user_memories': user_memories  # الذاكرة!
                     }
                     
                     reply_text, reply_style = await self.conversation_system.generate_reply(
@@ -2397,6 +2662,14 @@ class FoxyBot(commands.Bot):
                     
                     # حفظ ID الرسالة
                     self.user_manager.last_bot_messages[message.author.id] = sent_msg.id
+                    
+                    # ✅ استخراج تلقائي للمعلومات من المحادثة
+                    try:
+                        saved_info = self.smart_memory.auto_extract(str(message.author.id), message.content)
+                        if saved_info:
+                            logger.info(f"🧠 Auto-saved memory for {message.author.id}: {saved_info}")
+                    except Exception as mem_err:
+                        logger.error(f"Memory extraction error: {mem_err}")
                     
                     # إحصائيات
                     self.stats['messages_sent'] += 1
