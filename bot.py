@@ -2530,10 +2530,24 @@ class SmartMemory:
         self.memory_file = 'smart_memory.json'
         self.memories = self._load()
         
+        # 👑 أوامر القائد - قاعدة بيانات خاصة
+        self.leader_commands_file = 'leader_commands.json'
+        self.leader_commands = self._load_leader_commands()
+        
     def _load(self) -> Dict:
         try:
             if os.path.exists(self.memory_file):
                 with open(self.memory_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except:
+            pass
+        return {}
+    
+    def _load_leader_commands(self) -> Dict:
+        """تحميل أوامر القائد"""
+        try:
+            if os.path.exists(self.leader_commands_file):
+                with open(self.leader_commands_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except:
             pass
@@ -2545,6 +2559,48 @@ class SmartMemory:
                 json.dump(self.memories, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"Memory save error: {e}")
+    
+    def _save_leader_commands(self):
+        """حفظ أوامر القائد"""
+        try:
+            with open(self.leader_commands_file, 'w', encoding='utf-8') as f:
+                json.dump(self.leader_commands, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Leader commands save error: {e}")
+    
+    def add_leader_command(self, target_name: str, role: str, note: str = None) -> bool:
+        """إضافة أمر من القائد"""
+        target_name_lower = target_name.lower()
+        
+        self.leader_commands[target_name_lower] = {
+            'name': target_name,
+            'role': role,
+            'note': note,
+            'added_at': datetime.datetime.now().isoformat(),
+            'added_by': 'القائد KLR'
+        }
+        
+        self._save_leader_commands()
+        logger.info(f"👑 Leader command: {target_name} = {role}")
+        return True
+    
+    def remove_leader_command(self, target_name: str) -> bool:
+        """حذف أمر من القائد"""
+        target_name_lower = target_name.lower()
+        if target_name_lower in self.leader_commands:
+            del self.leader_commands[target_name_lower]
+            self._save_leader_commands()
+            logger.info(f"👑 Leader command removed: {target_name}")
+            return True
+        return False
+    
+    def get_leader_command(self, target_name: str) -> Optional[Dict]:
+        """الحصول على أمر القائد"""
+        return self.leader_commands.get(target_name.lower())
+    
+    def list_leader_commands(self) -> Dict:
+        """قائمة كل أوامر القائد"""
+        return self.leader_commands.copy()
     
     def remember(self, user_id: str, key: str, value: str):
         """حفظ معلومة"""
@@ -3275,6 +3331,91 @@ class FoxyBot(commands.Bot):
                     return
                 except Exception as e:
                     logger.error(f"List reminders error: {e}")
+            
+            # ✅ أوامر القائد القطعية (القائد فقط!)
+            if message.author.id == LEADER_ID:
+                msg_lower = message.content.lower()
+                
+                # إضافة أمر: "فلان عضو طاقم / VIP / صديقي..."
+                add_patterns = [
+                    ('عضو طاقم', 'عضو طاقم'),
+                    ('عضو في الطاقم', 'عضو طاقم'),
+                    ('من الطاقم', 'عضو طاقم'),
+                    ('vip', 'VIP'),
+                    ('في اي بي', 'VIP'),
+                    ('صديقي', 'صديق'),
+                    ('صاحبي', 'صديق'),
+                    ('خوي', 'خوي'),
+                    ('خويي', 'خوي'),
+                    ('موثوق', 'موثوق'),
+                    ('ثقة', 'ثقة')
+                ]
+                
+                for pattern, role in add_patterns:
+                    if pattern in msg_lower:
+                        # استخراج الاسم
+                        words = message.content.split()
+                        target_name = None
+                        
+                        for i, word in enumerate(words):
+                            if pattern in word.lower() or (pattern == 'vip' and 'vip' in word.lower()):
+                                if i > 0:
+                                    target_name = words[i-1]
+                                    break
+                        
+                        if target_name and target_name.lower() not in ['فوكسي', 'هو', 'هي']:
+                            # حفظ الأمر
+                            self.smart_memory.add_leader_command(target_name, role)
+                            
+                            await message.reply(
+                                f"👑 تمام يا قائد!\n\n"
+                                f"✅ حفظت: **{target_name}** = {role}\n"
+                                f"📝 راح أتذكره دائماً!",
+                                mention_author=False
+                            )
+                            return
+                
+                # حذف أمر: "احذف فلان / امسح فلان"
+                if any(word in msg_lower for word in ['احذف', 'امسح', 'شيل']):
+                    words = message.content.split()
+                    for i, word in enumerate(words):
+                        if word in ['احذف', 'امسح', 'شيل'] and i < len(words) - 1:
+                            target_name = words[i+1]
+                            
+                            if self.smart_memory.remove_leader_command(target_name):
+                                await message.reply(
+                                    f"👑 تمام يا قائد!\n\n"
+                                    f"✅ حذفت معلومات: **{target_name}**",
+                                    mention_author=False
+                                )
+                            else:
+                                await message.reply(
+                                    f"👑 يا قائد!\n\n"
+                                    f"❌ ما لقيت معلومات عن: **{target_name}**",
+                                    mention_author=False
+                                )
+                            return
+                
+                # عرض قائمة الأوامر: "وش عندك / قائمة الأوامر"
+                if any(word in msg_lower for word in ['وش عندك', 'قائمة الأوامر', 'قائمتي']):
+                    commands = self.smart_memory.list_leader_commands()
+                    
+                    if commands:
+                        msg = "👑 **قائمة أوامرك يا قائد:**\n\n"
+                        
+                        for name_lower, data in commands.items():
+                            msg += f"• **{data['name']}** = {data['role']}\n"
+                            if data.get('note'):
+                                msg += f"  📝 {data['note']}\n"
+                        
+                        msg += f"\n✅ المجموع: {len(commands)} أمر"
+                        await message.reply(msg, mention_author=False)
+                    else:
+                        await message.reply(
+                            "👑 يا قائد!\n\n❌ ما عندك أوامر محفوظة حالياً!",
+                            mention_author=False
+                        )
+                    return
             
             # ✅ طلب توليد صورة
             if any(word in message.content.lower() for word in ['اصنع صورة', 'سوي صورة', 'ارسم', 'صور', 'generate image', 'افرح']):
