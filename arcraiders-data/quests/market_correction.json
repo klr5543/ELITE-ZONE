@@ -1,0 +1,113 @@
+{
+  "id": "ss10l",
+  "name": {
+    "da": "Markedskorrektion",
+    "de": "Marktkorrektur",
+    "en": "Market Correction",
+    "es": "Corrección del mercado",
+    "fr": "Correction du marché",
+    "he": "תיקון שוק",
+    "hr": "Tržišna Korekcija",
+    "it": "Correzione di mercato",
+    "ja": "市場調整",
+    "kr": "시장 조정",
+    "no": "Markedskorreksjon",
+    "pl": "Korekta rynkowa",
+    "pt": "Correção de mercado",
+    "pt-BR": "Correção de Mercado",
+    "ru": "Коррекция рынка",
+    "sr": "Tržišna Korekcija",
+    "tr": "Piyasa Düzeltmesi",
+    "uk": "Корекція ринку",
+    "zh-CN": "市场修正",
+    "zh-TW": "市場修正"
+  },
+  "map": ["buried_city"],
+  "trader": "Tian Wen",
+  "description": {
+    "da": "Det tyveri før? Ser ikke ud som en tilfældighed længere. Noget af konkurrencen fra Toledo etablerer sig, hvor de ikke hører hjemme. Jeg vil have deres gemmested saboteret, helst før de bliver for komfortable.",
+    "de": "Dieser Diebstahl vorher? Sieht nicht mehr nach einem Zufall aus. Einige der Konkurrenz aus Toledo eröffnen ein Geschäft, wo sie nicht hingehören. Ich will, dass ihr Versteck sabotiert wird, vorzugsweise bevor sie es sich zu gemütlich machen.",
+    "en": "That theft before? Doesn't look like a coincidence anymore. Some of the competition from Toledo is setting up shop where they don't belong. I want their cache sabotaged, preferably before they get too comfortable.",
+    "es": "¿Ese robo de antes? Ya no parece una coincidencia. Parte de la competencia de Toledo está estableciéndose donde no pertenece. Quiero que su alijo sea saboteado, preferiblemente antes de que se pongan demasiado cómodos.",
+    "fr": "Ce vol d'avant ? Ça ne ressemble plus à une coïncidence. Une partie de la concurrence de Toledo s'installe là où elle n'a rien à faire. Je veux que leur cachette soit sabotée, de préférence avant qu'ils ne s'installent trop confortablement.",
+    "he": "הגניבה ההיא מקודם? זה כבר לא נראה כמו צירוף מקרים. חלק מהמתחרים מ-Toledo מתמקמים במקום שלא שייך להם. אני רוצה שתחבלו במאגר שלהם, עדיף לפני שהם ירגישו יותר מדי בנוח.",
+    "hr": "Ona krađa od prije? Više ne izgleda kao slučajnost. Neka konkurencija iz Toleda otvara radnju gdje ne treba. Želim da im se ostava sabotira, po mogućnosti prije nego što se previše ugodno smjeste.",
+    "it": "Quel furto di prima? Non sembra più una coincidenza. Parte della concorrenza da Toledo si sta stabilendo dove non dovrebbe. Voglio che il loro nascondiglio venga sabotato, preferibilmente prima che si mettano troppo comodi.",
+    "ja": "前の盗難？もう偶然には見えない。トレドの競合相手が場違いな場所に店を構えている。彼らが居心地よくなる前に、隠し場所を妨害してほしい。",
+    "kr": "전에 있었던 그 절도? 더 이상 우연으로 보이지 않아. 톨레도의 경쟁자들이 있어서는 안 될 곳에 자리를 잡고 있어. 그들이 너무 편해지기 전에 보급품을 파괴했으면 해.",
+    "no": "Det tyveriet før? Ser ikke ut som en tilfeldighet lenger. Noe av konkurransen fra Toledo etablerer seg der de ikke hører hjemme. Jeg vil at deres gjemmested skal saboteres, helst før de blir for komfortable.",
+    "pl": "Ta kradzież wcześniej? Nie wygląda już na przypadek. Część konkurencji z Toledo zakłada interes tam, gdzie nie powinna. Chcę, żeby ich skrytka została sabotowana, najlepiej zanim się za bardzo rozgoszczą.",
+    "pt": "Aquele roubo de antes? Não parece mais uma coincidência. Parte da concorrência de Toledo está se estabelecendo onde não deveria. Quero que o esconderijo deles seja sabotado, de preferência antes que fiquem muito confortáveis.",
+    "pt-BR": "Aquele roubo não foi coincidência, não. Tem gente de Toledo se instalando onde não deveria. Quero que o estoque deles seja sabotado, de preferência antes de se acomodarem.",
+    "ru": "Та кража раньше? Больше не похоже на совпадение. Конкуренты из Толедо обосновываются там, где им не место. Я хочу, чтобы их тайник саботировали, желательно до того, как они освоятся.",
+    "sr": "Ona krađa od pre? Više ne izgleda kao slučajnost. Neka konkurencija iz Toleda otvara radnju gde ne treba. Želim da im se ostava sabotira, po mogućstvu pre nego što se previše udobno smeste.",
+    "tr": "Önceki hırsızlık mı? Artık tesadüf gibi görünmüyor. Toledo'dan bazı rakipler olmadıkları yerde iş kuruyor. Zulalarının sabotajlanmasını istiyorum, tercihen çok rahat etmeden önce.",
+    "uk": "Та крадіжка раніше? Більше не схоже на збіг обставин. Деякі конкуренти з Толедо влаштовуються там, де їм не місце. Я хочу, щоб їхню схованку саботували, бажано до того, як вони освоїться.",
+    "zh-CN": "之前那次盗窃？看起来不再像是巧合了。一些来自托莱多的竞争对手在不该出现的地方开店了。我要破坏他们的储藏点，最好在他们站稳脚跟之前。",
+    "zh-TW": "之前那次盜竊？看起來不再像是巧合了。一些來自托萊多的競爭對手在不該出現的地方開店了。我要破壞他們的儲藏點，最好在他們站穩腳跟之前。"
+  },
+  "objectives": [
+    {
+      "da": "Find gemmestedet nær Marano-stationen",
+      "de": "Finde das Versteck in der Nähe der Marano-Station",
+      "en": "Locate the cache near Marano Station",
+      "es": "Localiza el alijo cerca de la estación Marano",
+      "fr": "Localisez la cachette près de la station Marano",
+      "he": "אתר את המאגר ליד Marano Station",
+      "hr": "Lociraj ostavu blizu Marano Stanice",
+      "it": "Localizza il nascondiglio vicino alla stazione Marano",
+      "ja": "マラーノ駅付近の宝箱を探す",
+      "kr": "마라노 역 근처의 보급품 찾기",
+      "no": "Finn gjemmestedet nær Marano-stasjonen",
+      "pl": "Zlokalizuj skrytkę w pobliżu stacji Marano",
+      "pt": "Localize o esconderijo perto da estação Marano",
+      "pt-BR": "Encontre o estoque perto da Estação Marano",
+      "ru": "Найти тайник рядом со станцией Марано",
+      "sr": "Lociraj ostavu blizu Marano Stanice",
+      "tr": "Marano İstasyonu yakınındaki zulayı bul",
+      "uk": "Знайти схованку поблизу станції Марано",
+      "zh-CN": "找到马拉诺车站附近的储藏点",
+      "zh-TW": "找到馬拉諾車站附近的儲藏點"
+    },
+    {
+      "da": "Saboter cachen",
+      "de": "Sabotiere den Cache",
+      "en": "Sabotage the cache",
+      "es": "Sabotea el caché",
+      "fr": "Sabotez la cache",
+      "he": "חבל במאגר",
+      "hr": "Sabotiraj ostavu",
+      "it": "Sabota la cache",
+      "ja": "隠してある物に細工をする",
+      "kr": "보급품 파괴하기",
+      "no": "Saboter hurtiglageret",
+      "pl": "Sabotuj skrytkę",
+      "pt": "Sabote o cache",
+      "pt-BR": "Sabote o estoque",
+      "ru": "Саботировать тайник",
+      "sr": "Sabotiraj ostavu",
+      "tr": "Zulayı sabote et",
+      "uk": "Саботувати схованку",
+      "zh-CN": "破坏储藏点",
+      "zh-TW": "破壞儲藏點"
+    }
+  ],
+  "rewardItemIds": [
+    {
+      "itemId": "silencer_ii",
+      "quantity": 1
+    },
+    {
+      "itemId": "extended_light_mag_i",
+      "quantity": 1
+    },
+    {
+      "itemId": "compensator_i",
+      "quantity": 1
+    }
+  ],
+  "xp": 0,
+  "previousQuestIds": ["ss10i"],
+  "nextQuestIds": ["ss10m"],
+  "updatedAt": "01/13/2026"
+}

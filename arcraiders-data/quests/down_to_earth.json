@@ -1,0 +1,118 @@
+{
+  "id": "ss6",
+  "name": {
+    "da": "Ned på jorden",
+    "de": "Bodenständig",
+    "en": "Down To Earth",
+    "es": "Pies en la tierra",
+    "fr": "Retour sur terre",
+    "he": "רגליים על הקרקע",
+    "hr": "Spuštanje na Zemlju",
+    "it": "Coi piedi per terra",
+    "ja": "フィールドワーク",
+    "kr": "지상으로",
+    "no": "Ned på jorden",
+    "pl": "Z powrotem na ziemię",
+    "pt": "De volta à terra",
+    "pt-BR": "Pé no chäo",
+    "ru": "Приземленные загадки",
+    "sr": "Spuštanje na Zemlju",
+    "tr": "Yere İniş",
+    "uk": "Повернення на Землю",
+    "zh-CN": "脚踏实地",
+    "zh-TW": "腳踏實地"
+  },
+  "map": ["buried_city", "the_spaceport", "dam_battlegrounds"],
+  "trader": "Shani",
+  "grantedItemIds": [
+    {
+      "itemId": "binoculars",
+      "quantity": 1
+    }
+  ],
+  "description": {
+    "de": "Raider berichten schon lange von seltsam aussehenden Kisten, die aus defekten ARC-Sondern fallen. Wenn wir die irgendwie öffnen könnten, verstehen wir vielleicht, wonach sie suchen."
+  },
+  "objectives": [
+    {
+      "da": "Besøg et feltdepot",
+      "de": "Ein Felddepot besuchen",
+      "en": "Visit a Field Depot",
+      "es": "Visita un depósito de campo",
+      "fr": "Visitez un dépôt de terrain",
+      "he": "בקר במחסן שדה",
+      "hr": "Posjetite Terenski Depo",
+      "it": "Visita un deposito sul campo",
+      "ja": "フィールド貯蔵庫を訪れる",
+      "kr": "야전 보급소 방문",
+      "no": "Besøk et feltdepot",
+      "pl": "Odwiedź depot polowy",
+      "pt": "Visite um depósito de campo",
+      "pt-BR": "Vá até um Depósito de Campo",
+      "ru": "Посетите полевую станцию",
+      "sr": "Posetite Terenski Depo",
+      "tr": "Bir Saha Deposunu ziyaret et",
+      "uk": "Відвідайте польове сховище",
+      "zh-CN": "访问野外仓库",
+      "zh-TW": "訪問野外倉庫"
+    },
+    {
+      "da": "Lever en feltkasse til forsyningsstationen",
+      "de": "Feldkiste an ein Felddepot liefern",
+      "en": "Deliver a Field Crate to Supply Station",
+      "es": "Entrega una caja de campo a la estación de suministros",
+      "fr": "Livrez une caisse de terrain à la station de ravitaillement",
+      "he": "העבר ארגז שדה לתחנת אספקה",
+      "hr": "Dostavite Terensku Gajbu na Stanicu za Opskrbu",
+      "it": "Consegna una cassa da campo alla stazione di rifornimento",
+      "ja": "フィールド・クレートをフィールド貯蔵庫に届ける",
+      "kr": "야전 상자를 보급 기지에 배달",
+      "no": "Lever en feltkasse til forsyningsstasjonen",
+      "pl": "Dostarcz skrzynię polową do stacji zaopatrzenia",
+      "pt": "Entregue uma caixa de campo à estação de suprimentos",
+      "pt-BR": "Entregue uma Caixa de Campo em um Depósito de Campo",
+      "ru": "Доставьте ящик на полевую станцию",
+      "sr": "Dostavite Terensku Gajbu na Stanicu za Snabdevanje",
+      "tr": "Saha Sandığını İkmal İstasyonuna teslim et",
+      "uk": "Доставте польовий ящик на станцію постачання",
+      "zh-CN": "将野外箱子运送到补给站",
+      "zh-TW": "將野外箱子運送到補給站"
+    },
+    {
+      "da": "Indsaml belønningen",
+      "de": "Sammle die Belohnung ein",
+      "en": "Collect the reward",
+      "es": "Recoge la recompensa",
+      "fr": "Récupérez la récompense",
+      "he": "אסוף את הפרס",
+      "hr": "Prikupite nagradu",
+      "it": "Raccogli la ricompensa",
+      "ja": "報酬を収集する",
+      "kr": "보상 수령",
+      "no": "Hent belønningen",
+      "pl": "Odbierz nagrodę",
+      "pt": "Colete a recompensa",
+      "pt-BR": "Pegue a recompensa",
+      "ru": "Получить награду",
+      "sr": "Prikupite nagradu",
+      "tr": "Ödülü topla",
+      "uk": "Отримайте винагороду",
+      "zh-CN": "领取奖励",
+      "zh-TW": "領取獎勵"
+    }
+  ],
+  "rewardItemIds": [
+    {
+      "itemId": "combat_mk1",
+      "quantity": 1
+    },
+    {
+      "itemId": "medium_shield",
+      "quantity": 1
+    }
+  ],
+  "xp": 0,
+  "previousQuestIds": ["ss5a"],
+  "nextQuestIds": ["ss9"],
+  "updatedAt": "01/13/2026"
+}
