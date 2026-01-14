@@ -541,6 +541,15 @@ class SearchEngine:
         if english_words:
             main_word = max(english_words, key=len).lower()
             english_phrase = " ".join(english_words).lower()
+            
+            # محاولة التقاط آخر نمط "اسم + مستوى" مثل "Anvil IV" من السؤال (مع السياق)
+            tier_pattern = re.compile(r'\b([A-Za-z][A-Za-z0-9_]*)\s+(I{1,3}|IV|V)\b', re.IGNORECASE)
+            tier_matches = list(tier_pattern.finditer(query))
+            tier_phrase = None
+            if tier_matches:
+                last_match = tier_matches[-1]
+                tier_phrase = f"{last_match.group(1)} {last_match.group(2)}".lower()
+            
             best_item = None
             best_score = 0.0
             
@@ -553,7 +562,10 @@ class SearchEngine:
                 name_lower = name.lower()
                 sim_main = SequenceMatcher(None, main_word, name_lower).ratio()
                 sim_phrase = SequenceMatcher(None, english_phrase, name_lower).ratio()
-                sim = max(sim_main, sim_phrase)
+                sim_tier = 0.0
+                if tier_phrase:
+                    sim_tier = SequenceMatcher(None, tier_phrase, name_lower).ratio()
+                sim = max(sim_main, sim_phrase, sim_tier)
                 if sim > best_score:
                     best_score = sim
                     best_item = item
