@@ -359,8 +359,13 @@ class SearchEngine:
         if not text:
             return ""
         text = text.lower().strip()
-        # إزالة الأحرف الخاصة
-        text = re.sub(r'[^\w\s\u0600-\u06FF]', ' ', text)
+        # تحويل الأرقام الرومانية والعادية لمستويات
+        # "4" -> "iv", "III" -> "iii", "الى 4" -> "iv"
+        roman_map = {'1': 'i', '2': 'ii', '3': 'iii', '4': 'iv', '5': 'v'}
+        for num, roman in roman_map.items():
+            text = re.sub(rf'\b{num}\b', roman, text)
+        # إزالة الأحرف الخاصة (لكن نحتفظ بـ _ للـ id)
+        text = re.sub(r'[^\w\s\u0600-\u06FF_]', ' ', text)
         # توحيد المسافات
         text = re.sub(r'\s+', ' ', text)
         return text
@@ -421,6 +426,10 @@ class SearchEngine:
         query_normalized = self.normalize_text(query)
         query_translated = self.translate_arabic_query(query_normalized)
         
+        # كشف إذا السؤال عن تطوير/ترقية
+        upgrade_keywords = ['تطوير', 'ترقية', 'upgrade', 'الى', 'لل', 'لـ', '4', 'iv', 'iii', 'ii', 'i']
+        is_upgrade_question = any(keyword in query_normalized for keyword in upgrade_keywords)
+        
         results = []
         
         for item in self.db.all_data:
@@ -430,8 +439,8 @@ class SearchEngine:
             score = 0
             matched_field = None
             
-            # البحث في الحقول المختلفة
-            searchable_fields = ['name', 'title', 'displayName', 'description', 
+            # البحث في الحقول المختلفة (بما فيها id)
+            searchable_fields = ['id', 'name', 'title', 'displayName', 'description', 
                                 'category', 'type', 'location', 'nameKey', 'rarity']
             
             for field in searchable_fields:
@@ -454,6 +463,11 @@ class SearchEngine:
                         s2 = self._calculate_match_score(query_translated, text_normalized)
                         
                         current_score = max(s1, s2)
+                        
+                        # لو السؤال عن تطوير والنتيجة فيها upgradeCost، نرفع النتيجة
+                        if is_upgrade_question and 'upgradeCost' in item:
+                            current_score += 0.2
+                        
                         if current_score > score:
                             score = current_score
                             matched_field = field
@@ -469,9 +483,25 @@ class SearchEngine:
                     s2 = self._calculate_match_score(query_translated, field_normalized)
                     
                     current_score = max(s1, s2)
+                    
+                    # لو السؤال عن تطوير والنتيجة فيها upgradeCost، نرفع النتيجة
+                    if is_upgrade_question and 'upgradeCost' in item:
+                        current_score += 0.2
+                    
                     if current_score > score:
                         score = current_score
                         matched_field = field
+            
+            # بحث خاص في id (مهم جداً)
+            item_id = item.get('id', '')
+            if item_id:
+                item_id_normalized = self.normalize_text(str(item_id))
+                # لو الاستعلام يحتوي على id أو جزء منه
+                if query_normalized in item_id_normalized or item_id_normalized in query_normalized:
+                    id_score = 0.9 if query_normalized == item_id_normalized else 0.7
+                    if id_score > score:
+                        score = id_score
+                        matched_field = 'id'
             
             if score > 0.3:
                 results.append({
@@ -919,6 +949,26 @@ class EmbedBuilder:
         return embed
     
     @staticmethod
+    def _find_resource_name(resource_id: str, database_manager) -> str:
+        """البحث عن اسم المورد الحقيقي في قاعدة البيانات"""
+        if not database_manager or not database_manager.loaded:
+            return None
+        
+        # البحث في قاعدة البيانات عن المورد
+        for item in database_manager.items:
+            if not isinstance(item, dict):
+                continue
+            
+            item_id = item.get('id', '')
+            if item_id == resource_id:
+                # استخراج الاسم الإنجليزي
+                name = EmbedBuilder.extract_field(item, 'name')
+                if name:
+                    return name
+        
+        return None
+    
+    @staticmethod
     def extract_field(item: dict, field: str) -> str:
         """استخراج قيمة حقل - الإنجليزي للأسماء"""
         if field not in item:
@@ -937,7 +987,12 @@ class EmbedBuilder:
     def get_image_url(item: dict) -> str:
         """الحصول على رابط صورة العنصر"""
         # أولاً: لو في رابط صورة مباشر
-        img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
+        img_url = (
+            item.get('image')
+            or item.get('icon')
+            or item.get('imageUrl')
+            or item.get('imageFilename')
+        )
         if img_url and isinstance(img_url, str) and img_url.startswith('http'):
             return img_url
         
@@ -968,7 +1023,7 @@ class EmbedBuilder:
         return None
     
     @staticmethod
-    def item_embed(item: dict, translated_desc: str = None) -> discord.Embed:
+    def item_embed(item: dict, translated_desc: str = None, database_manager=None) -> discord.Embed:
         """إنشاء Embed لعنصر من اللعبة - الاسم إنجليزي والباقي عربي"""
         # استخراج الاسم - الإنجليزي
         name = None
@@ -1037,6 +1092,55 @@ class EmbedBuilder:
         price = item.get('price') or item.get('value')
         if price:
             embed.add_field(name="💰 السعر", value=str(price), inline=True)
+
+        # تكلفة التطوير (Upgrade Cost)
+        upgrade_cost = item.get('upgradeCost')
+        if isinstance(upgrade_cost, dict) and upgrade_cost:
+            parts = []
+            for res_id, amount in upgrade_cost.items():
+                # البحث عن اسم المورد الحقيقي في قاعدة البيانات
+                resource_name = EmbedBuilder._find_resource_name(res_id, database_manager)
+                if resource_name:
+                    parts.append(f"{amount}x {resource_name}")
+                else:
+                    # لو ما لقيناه، نستخدم الاسم المنسق
+                    readable_name = str(res_id).replace('_', ' ').title()
+                    parts.append(f"{amount}x {readable_name}")
+            if parts:
+                embed.add_field(
+                    name="🛠️ تكلفة التطوير",
+                    value="\n".join(parts),
+                    inline=False
+                )
+
+        # نواتج التفكيك/إعادة التدوير (اختياري لكنها مفيدة)
+        recycles_into = item.get('recyclesInto')
+        salvages_into = item.get('salvagesInto')
+        recycle_lines = []
+        if isinstance(recycles_into, dict) and recycles_into:
+            recycle_lines.append("♻️ يعاد تدويره إلى:")
+            for res_id, amount in recycles_into.items():
+                resource_name = EmbedBuilder._find_resource_name(res_id, database_manager)
+                if resource_name:
+                    recycle_lines.append(f"- {amount}x {resource_name}")
+                else:
+                    readable_name = str(res_id).replace('_', ' ').title()
+                    recycle_lines.append(f"- {amount}x {readable_name}")
+        if isinstance(salvages_into, dict) and salvages_into:
+            recycle_lines.append("🔧 يتفكك إلى:")
+            for res_id, amount in salvages_into.items():
+                resource_name = EmbedBuilder._find_resource_name(res_id, database_manager)
+                if resource_name:
+                    recycle_lines.append(f"- {amount}x {resource_name}")
+                else:
+                    readable_name = str(res_id).replace('_', ' ').title()
+                    recycle_lines.append(f"- {amount}x {readable_name}")
+        if recycle_lines:
+            embed.add_field(
+                name="♻️ التفكيك",
+                value="\n".join(recycle_lines)[:500],
+                inline=False
+            )
         
         # صورة العنصر المصغرة (Thumbnail)
         img_url = EmbedBuilder.get_image_url(item)
@@ -1385,6 +1489,15 @@ async def on_message(message: discord.Message):
     # حقن السياق
     question = bot.context_manager.inject_context(message.author.id, content)
     
+    # التأكد من أن search_engine جاهز
+    if not bot.search_engine:
+        embed = EmbedBuilder.error(
+            "خطأ في النظام",
+            "البحث غير متاح حالياً. جرب بعد قليل."
+        )
+        await message.reply(embed=embed)
+        return
+    
     # البحث في قاعدة البيانات
     results = bot.search_engine.search(question, limit=1)
     
@@ -1395,6 +1508,7 @@ async def on_message(message: discord.Message):
         
         # تحقق إضافي: لو السؤال فيه اسم محدد، نتأكد النتيجة تطابقه
         item_name = bot.search_engine.extract_name(item).lower()
+        item_id = str(item.get('id', '')).lower()
         
         # استخراج الكلمات الإنجليزية من السؤال (أسماء العناصر)
         english_words = re.findall(r'[a-zA-Z]+', content)
@@ -1403,9 +1517,21 @@ async def on_message(message: discord.Message):
         skip_result = False
         if english_words:
             main_word = max(english_words, key=len).lower()  # أطول كلمة إنجليزية
-            if len(main_word) > 3 and main_word not in item_name:
-                # الاسم المطلوب مو موجود بالنتيجة - نعتبرها غلط
-                skip_result = True
+            # التحقق من الاسم أو الـ id
+            if len(main_word) > 3:
+                name_match = main_word in item_name or item_name in main_word
+                id_match = main_word in item_id or item_id in main_word
+                
+                # لو السؤال فيه رقم (مستوى)، نتحقق من الـ id
+                has_level = bool(re.search(r'\b[1-5]\b|\b[ivx]+\b', content.lower()))
+                if has_level:
+                    # لو السؤال عن مستوى معين، نتأكد الـ id يحتوي المستوى
+                    level_match = any(level in item_id for level in ['i', 'ii', 'iii', 'iv', 'v'])
+                    if not (name_match or id_match or level_match):
+                        skip_result = True
+                elif not (name_match or id_match):
+                    # الاسم المطلوب مو موجود بالنتيجة - نعتبرها غلط
+                    skip_result = True
         
         if not skip_result:
             # استخراج الوصف وترجمته
@@ -1422,7 +1548,7 @@ async def on_message(message: discord.Message):
             if description and description != 'لا يوجد وصف':
                 translated_desc = await bot.ai_manager.translate_to_arabic(description)
             
-            embed = EmbedBuilder.item_embed(item, translated_desc)
+            embed = EmbedBuilder.item_embed(item, translated_desc, bot.database)
             
             # كشف لو السؤال عن موقع
             location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
