@@ -373,24 +373,22 @@ class SearchEngine:
         return results[:limit]
     
     def extract_name(self, item: dict) -> str:
-        """استخراج الاسم من العنصر - يدعم الترجمات المتعددة"""
-        # الحقول المحتملة للاسم
+        """استخراج الاسم من العنصر - الإنجليزي للأسماء"""
         name_fields = ['name', 'title', 'displayName', 'nameKey']
         
         for field in name_fields:
             if field in item:
                 value = item[field]
                 
-                # لو القيمة dict (ترجمات متعددة)
+                # لو القيمة dict (ترجمات متعددة) - الإنجليزي أولاً
                 if isinstance(value, dict):
-                    # أولوية: إنجليزي > عربي > أي لغة
-                    return value.get('en') or value.get('ar') or value.get('en-US') or list(value.values())[0]
+                    return value.get('en') or value.get('ar') or list(value.values())[0]
                 
                 # لو القيمة string عادي
                 elif isinstance(value, str) and value:
                     return value
         
-        return "Unknown"
+        return "غير معروف"
     
     def find_similar(self, query: str, limit: int = 3) -> list:
         """إيجاد عناصر مشابهة للاقتراحات"""
@@ -763,7 +761,7 @@ class EmbedBuilder:
     
     @staticmethod
     def extract_field(item: dict, field: str) -> str:
-        """استخراج قيمة حقل - يدعم الترجمات"""
+        """استخراج قيمة حقل - الإنجليزي للأسماء"""
         if field not in item:
             return None
         
@@ -771,15 +769,15 @@ class EmbedBuilder:
         
         # لو dict (ترجمات متعددة)
         if isinstance(value, dict):
-            return value.get('en') or value.get('ar') or value.get('en-US') or str(list(value.values())[0]) if value else None
+            return value.get('en') or value.get('ar') or str(list(value.values())[0]) if value else None
         
         # لو string أو رقم
         return str(value) if value else None
     
     @staticmethod
     def item_embed(item: dict) -> discord.Embed:
-        """إنشاء Embed لعنصر من اللعبة"""
-        # استخراج الاسم
+        """إنشاء Embed لعنصر من اللعبة - الاسم إنجليزي والباقي عربي"""
+        # استخراج الاسم - الإنجليزي
         name = None
         for field in ['name', 'title', 'displayName', 'nameKey']:
             if field in item:
@@ -790,9 +788,9 @@ class EmbedBuilder:
                     name = str(value)
                 if name:
                     break
-        name = name or 'Unknown'
+        name = name or 'غير معروف'
         
-        # استخراج الوصف
+        # استخراج الوصف - الإنجليزي (لأن ما في عربي)
         description = None
         if 'description' in item:
             desc_val = item['description']
@@ -809,7 +807,7 @@ class EmbedBuilder:
             timestamp=datetime.now()
         )
         
-        # إضافة الحقول
+        # إضافة الحقول - العناوين عربي
         category = EmbedBuilder.extract_field(item, 'category')
         if category:
             embed.add_field(name="📁 الفئة", value=category, inline=True)
@@ -820,11 +818,15 @@ class EmbedBuilder:
         
         rarity = EmbedBuilder.extract_field(item, 'rarity')
         if rarity:
-            rarity_emoji = {
-                'common': '⚪', 'uncommon': '🟢', 'rare': '🔵',
-                'epic': '🟣', 'legendary': '🟡'
-            }.get(rarity.lower(), '⚪')
-            embed.add_field(name="💎 الندرة", value=f"{rarity_emoji} {rarity}", inline=True)
+            # ترجمة الندرة للعربي
+            rarity_ar = {
+                'common': 'عادي ⚪',
+                'uncommon': 'غير شائع 🟢', 
+                'rare': 'نادر 🔵',
+                'epic': 'ملحمي 🟣',
+                'legendary': 'أسطوري 🟡'
+            }.get(rarity.lower(), rarity)
+            embed.add_field(name="💎 الندرة", value=rarity_ar, inline=True)
         
         location = EmbedBuilder.extract_field(item, 'location')
         if location:
@@ -1106,19 +1108,46 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
     
+    # تنظيف الرسالة
+    content = message.content.strip()
+    content_lower = content.lower()
+    
+    # كلمات نتجاهلها (اسم البوت، تحيات قصيرة، إلخ)
+    ignore_words = [
+        'دليل', 'daleel', 'bot', 'بوت',
+        'هاي', 'hi', 'hello', 'مرحبا', 'السلام',
+        'هلا', 'اهلا', 'hey', 'yo'
+    ]
+    
+    # تجاهل الرسائل القصيرة جداً أو اللي هي بس اسم البوت
+    if len(content) < 5 or content_lower in ignore_words:
+        return
+    
+    # إزالة اسم البوت من بداية الرسالة لو موجود
+    for word in ['دليل', 'daleel']:
+        if content_lower.startswith(word):
+            content = content[len(word):].strip()
+            break
+    
+    # لو بعد الإزالة صارت فاضية أو قصيرة جداً
+    if len(content) < 3:
+        return
+    
     # ردود سريعة
     quick_responses = {
         'شكراً': 'العفو! 💚',
         'شكرا': 'العفو! 💚',
         'thanks': "You're welcome! 💚",
+        'thank you': "You're welcome! 💚",
         'ممتاز': 'سعيد إني ساعدتك! 😊',
         'رائع': 'دائماً في الخدمة! 🎮',
-        'تمام': 'أي خدمة! 👍'
+        'تمام': 'أي خدمة! 👍',
+        'حلو': 'شكراً! 😊',
+        'good': 'Thanks! 😊'
     }
     
-    msg_lower = message.content.lower().strip()
-    if msg_lower in quick_responses:
-        await message.reply(quick_responses[msg_lower])
+    if content_lower in quick_responses:
+        await message.reply(quick_responses[content_lower])
         return
     
     # فحص السبام
@@ -1126,17 +1155,13 @@ async def on_message(message: discord.Message):
     if not allowed:
         embed = EmbedBuilder.warning(
             "انتظر قليلاً",
-            f"⏰ **الحد: 3 أسئلة/دقيقة**\n\nانتظر **{wait_time}** ثانية ثم جرب مرة أخرى!"
+            f"⏰ انتظر **{wait_time}** ثانية"
         )
-        await message.reply(embed=embed)
-        return
-    
-    # تجاهل الرسائل القصيرة جداً
-    if len(message.content.strip()) < 3:
+        await message.reply(embed=embed, delete_after=10)
         return
     
     # حقن السياق
-    question = bot.context_manager.inject_context(message.author.id, message.content)
+    question = bot.context_manager.inject_context(message.author.id, content)
     
     # البحث في قاعدة البيانات
     results = bot.search_engine.search(question, limit=1)
@@ -1153,10 +1178,9 @@ async def on_message(message: discord.Message):
         name = bot.search_engine.extract_name(item)
         bot.context_manager.set_context(message.author.id, name, item)
         
-        # إضافة reactions
-        await reply.add_reaction('👍')
-        await reply.add_reaction('👎')
-        await reply.add_reaction('🐛')
+        # إضافة reactions بسيطة
+        await reply.add_reaction('✅')  # إجابة صحيحة
+        await reply.add_reaction('❌')  # إجابة خاطئة
         
         bot.questions_answered += 1
     
@@ -1168,49 +1192,52 @@ async def on_message(message: discord.Message):
             suggestion_text = "\n".join([f"• {s}" for s in suggestions])
             embed = EmbedBuilder.warning(
                 "هل تقصد..؟",
-                f"ما لقيت جواب دقيق، لكن هل تقصد:\n\n{suggestion_text}\n\n💡 جرب إعادة صياغة السؤال!"
+                f"ما لقيت **{content}** بالضبط\n\nهل تقصد:\n{suggestion_text}"
             )
+            reply = await message.reply(embed=embed)
+            await reply.add_reaction('✅')
+            await reply.add_reaction('❌')
         else:
-            embed = EmbedBuilder.info(
-                "جاري البحث...",
-                "دقيقة واحدة، أبحث لك في الـ AI..."
-            )
-        
-        await message.reply(embed=embed)
+            # نستخدم AI
+            await ask_ai_and_reply(message, question)
     
     else:
         # لا نتائج - نستخدم AI
-        thinking_msg = await message.reply("🤔 أبحث لك...")
-        
-        context = ""
-        user_context = bot.context_manager.get_context(message.author.id)
-        if user_context:
-            context = f"المستخدم كان يسأل عن: {user_context['item']}"
-        
-        ai_result = await bot.ai_manager.ask_ai(question, context)
-        
-        await thinking_msg.delete()
-        
-        if ai_result['success']:
-            embed = EmbedBuilder.success(
-                "جواب من AI",
-                ai_result['answer']
-            )
-            embed.set_footer(text=f"🤖 {BOT_NAME} | via {ai_result['provider']}")
-        else:
-            embed = EmbedBuilder.error(
-                "عذراً",
-                "ما قدرت ألقى جواب لسؤالك.\n\n💡 جرب صياغة السؤال بطريقة مختلفة!"
-            )
-        
-        reply = await message.reply(embed=embed)
-        await reply.add_reaction('👍')
-        await reply.add_reaction('👎')
-        await reply.add_reaction('🐛')
+        await ask_ai_and_reply(message, question)
+
+
+async def ask_ai_and_reply(message: discord.Message, question: str):
+    """سؤال الـ AI والرد"""
+    thinking_msg = await message.reply("🔍 أبحث لك...")
+    
+    context = ""
+    user_context = bot.context_manager.get_context(message.author.id)
+    if user_context:
+        context = f"المستخدم كان يسأل عن: {user_context['item']}"
+    
+    ai_result = await bot.ai_manager.ask_ai(question, context)
+    
+    await thinking_msg.delete()
+    
+    if ai_result['success']:
+        embed = EmbedBuilder.success(
+            "جواب من AI",
+            ai_result['answer']
+        )
+        embed.set_footer(text=f"via {ai_result['provider']} • 🤖 {BOT_NAME}")
+    else:
+        embed = EmbedBuilder.error(
+            "عذراً",
+            "ما قدرت ألقى جواب.\n\n💡 جرب صياغة السؤال بطريقة مختلفة!"
+        )
+    
+    reply = await message.reply(embed=embed)
+    await reply.add_reaction('✅')
+    await reply.add_reaction('❌')
 
 @bot.event
 async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
-    """معالجة الـ Reactions"""
+    """معالجة الـ Reactions - تسجيل التقييمات"""
     
     if user.bot:
         return
@@ -1220,41 +1247,39 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
     
     emoji = str(reaction.emoji)
     
-    if emoji == '🐛':
-        # بلاغ عن خطأ
-        try:
-            await user.send(
-                "🐛 **إبلاغ عن خطأ**\n\n"
-                "وش الخطأ اللي لاحظته؟\n"
-                "(اكتب رسالتك في الـ 60 ثانية القادمة)"
-            )
-            
-            def check(m):
-                return m.author == user and isinstance(m.channel, discord.DMChannel)
-            
+    # تسجيل في اللوق
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    
+    if emoji == '❌' and log_channel:
+        # إجابة خاطئة - نسجل في اللوق
+        embed = discord.Embed(
+            title="❌ تقييم: إجابة خاطئة",
+            color=COLORS["error"],
+            timestamp=datetime.now()
+        )
+        
+        # محتوى الرسالة الأصلية
+        original_content = ""
+        if reaction.message.embeds:
+            original_embed = reaction.message.embeds[0]
+            original_content = f"**{original_embed.title}**\n{original_embed.description[:200] if original_embed.description else ''}"
+        
+        embed.add_field(name="👤 من", value=user.mention, inline=True)
+        embed.add_field(name="📝 الرد", value=original_content[:500] or "Embed", inline=False)
+        
+        # السؤال الأصلي (الرسالة اللي رد عليها البوت)
+        if reaction.message.reference:
             try:
-                msg = await bot.wait_for('message', check=check, timeout=60.0)
-                
-                # إرسال البلاغ للقناة
-                log_channel = bot.get_channel(LOG_CHANNEL_ID)
-                if log_channel:
-                    embed = discord.Embed(
-                        title="🐛 بلاغ جديد",
-                        description=msg.content,
-                        color=COLORS["warning"],
-                        timestamp=datetime.now()
-                    )
-                    embed.add_field(name="من", value=user.mention)
-                    embed.add_field(name="الرسالة الأصلية", value=reaction.message.content[:200] if reaction.message.content else "Embed")
-                    await log_channel.send(embed=embed)
-                
-                await user.send("✅ شكراً! تم إرسال البلاغ للمشرفين.")
-                
-            except asyncio.TimeoutError:
-                await user.send("⏰ انتهى الوقت. جرب مرة أخرى.")
-                
-        except discord.Forbidden:
-            pass
+                original_msg = await reaction.message.channel.fetch_message(reaction.message.reference.message_id)
+                embed.add_field(name="❓ السؤال", value=original_msg.content[:200], inline=False)
+            except:
+                pass
+        
+        await log_channel.send(embed=embed)
+    
+    elif emoji == '✅':
+        # إجابة صحيحة - ممكن نسجلها للإحصائيات
+        pass
 
 # ═══════════════════════════════════════════════════════════════
 # التشغيل
