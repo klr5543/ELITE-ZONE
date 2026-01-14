@@ -1482,26 +1482,20 @@ async def on_message(message: discord.Message):
     results = bot.search_engine.search(question, limit=1)
     
     if results and results[0]['score'] > 0.6:
-        # وجدنا نتيجة جيدة!
         result = results[0]
         item = result['item']
         
-        # تحقق إضافي: لو السؤال فيه اسم محدد، نتأكد النتيجة تطابقه
         item_name = bot.search_engine.extract_name(item).lower()
         
-        # استخراج الكلمات الإنجليزية من السؤال (أسماء العناصر)
         english_words = re.findall(r'[a-zA-Z]+', content)
         
-        # لو في اسم إنجليزي بالسؤال، نتأكد موجود بالنتيجة
         skip_result = False
         if english_words:
-            main_word = max(english_words, key=len).lower()  # أطول كلمة إنجليزية
+            main_word = max(english_words, key=len).lower()
             if len(main_word) > 3 and main_word not in item_name:
-                # الاسم المطلوب مو موجود بالنتيجة - نعتبرها غلط
                 skip_result = True
         
         if not skip_result:
-            # استخراج الوصف وترجمته
             description = None
             if 'description' in item:
                 desc_val = item['description']
@@ -1510,38 +1504,45 @@ async def on_message(message: discord.Message):
                 else:
                     description = str(desc_val)
             
-            # ترجمة الوصف للعربي
             translated_desc = None
             if description and description != 'لا يوجد وصف':
                 translated_desc = await bot.ai_manager.translate_to_arabic(description)
             
             embed = EmbedBuilder.item_embed(item, translated_desc)
             
-            # كشف لو السؤال عن موقع
             location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
             is_location_question = any(keyword in content_lower for keyword in location_keywords)
+
+            crafting_keywords = ['ادوات', 'أدوات', 'تصنع', 'تسوي', 'تصنيع', 'recipe', 'craft', 'مكونات', 'مخطط']
+            is_crafting_question = any(keyword in content_lower for keyword in crafting_keywords)
+            if is_crafting_question:
+                recipe = item.get('recipe')
+                if isinstance(recipe, dict) and recipe:
+                    lines = []
+                    for key, amount in recipe.items():
+                        if amount is None:
+                            continue
+                        name = str(key).replace('_', ' ')
+                        lines.append(f"- {name}: {amount}")
+                    if lines:
+                        embed.add_field(name="مكونات التصنيع", value="\n".join(lines), inline=False)
             
-            # إرسال الرد الأول (معلومات العنصر)
             reply = await message.reply(embed=embed)
             
-            # لو سؤال عن موقع، نرسل صورة الخريطة
             if is_location_question:
                 location = item.get('location') or item.get('spawn_location') or item.get('map')
                 if location:
                     if isinstance(location, dict):
                         location = location.get('en') or list(location.values())[0]
                     
-                    # إرسال صورة الخريطة
                     map_embed = EmbedBuilder.map_embed(str(location), item)
                     await message.channel.send(embed=map_embed)
             
-            # حفظ السياق
             name = bot.search_engine.extract_name(item)
             bot.context_manager.set_context(message.author.id, name, item)
             
-            # إضافة reactions بسيطة
-            await reply.add_reaction('✅')  # إجابة صحيحة
-            await reply.add_reaction('❌')  # إجابة خاطئة
+            await reply.add_reaction('✅')
+            await reply.add_reaction('❌')
             
             bot.questions_answered += 1
             return
