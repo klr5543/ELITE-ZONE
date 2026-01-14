@@ -531,7 +531,7 @@ class SearchEngine:
             matched_field = None
             
             # البحث في الحقول المختلفة
-            searchable_fields = ['name', 'title', 'displayName', 'description', 
+            searchable_fields = ['id', 'name', 'title', 'displayName', 'description', 
                                 'category', 'type', 'location', 'nameKey', 'rarity']
             
             for field in searchable_fields:
@@ -1527,17 +1527,22 @@ async def on_message(message: discord.Message):
     search_query = question
     main_word = None
     if (is_crafting_question or is_location_question or is_obtain_question) and english_words:
-        main_word = max(english_words, key=len).lower()
-        search_query = main_word
+        id_like = next((w for w in english_words if '_' in w), None)
+        if id_like:
+            main_word = id_like.lower()
+            search_query = main_word
+        else:
+            main_word = " ".join(english_words).lower()
+            search_query = main_word
     
     ai_configured = is_ai_configured()
     use_ai = should_use_ai(question) and ai_configured
     if is_crafting_question or is_obtain_question or is_location_question:
         use_ai = False
     
-    results = bot.search_engine.search(search_query, limit=5 if is_crafting_question else 1)
+    results = bot.search_engine.search(search_query, limit=5 if (is_crafting_question or is_obtain_question or is_location_question) else 1)
     
-    if is_crafting_question and results:
+    if (is_crafting_question or is_obtain_question or is_location_question) and results:
         recipe_candidates = []
         for r in results:
             item_candidate = r['item']
@@ -1550,6 +1555,12 @@ async def on_message(message: discord.Message):
         else:
             results = [results[0]]
     
+    # تفضيل العنصر الأساسي على البلوبربنت في أسئلة الطرق/المكان
+    if (is_obtain_question or is_location_question) and results:
+        non_blueprints = [r for r in results if 'blueprint' not in bot.search_engine.extract_name(r['item']).lower() and 'Blueprint' not in r['item'].get('type', '')]
+        if non_blueprints:
+            results = non_blueprints
+    
     if results and (results[0]['score'] > 0.6 or (is_crafting_question and results[0]['score'] > 0.3)):
         result = results[0]
         item = result['item']
@@ -1557,7 +1568,7 @@ async def on_message(message: discord.Message):
         item_name = bot.search_engine.extract_name(item).lower()
         
         skip_result = False
-        if not is_crafting_question and english_words:
+        if (not is_crafting_question and not is_obtain_question and not is_location_question) and english_words:
             main_word = max(english_words, key=len).lower()
             if len(main_word) > 3 and main_word not in item_name:
                 skip_result = True
@@ -1624,7 +1635,7 @@ async def on_message(message: discord.Message):
             bot.questions_answered += 1
             return
     
-    if results and results[0]['score'] > 0.3:
+    if results and results[0]['score'] > 0.3 and not (is_obtain_question or is_location_question or is_crafting_question):
         suggestions = bot.search_engine.find_similar(question, limit=3)
         if suggestions:
             suggestion_text = "\n".join([f"• {s}" for s in suggestions])
