@@ -42,6 +42,80 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 BOT_NAME = "دليل"
 BOT_VERSION = "2.0.0"
 
+# قاموس عربي-إنجليزي للكلمات الشائعة
+ARABIC_TO_ENGLISH = {
+    # أسلحة
+    'سلاح': 'weapon',
+    'اسلحة': 'weapons',
+    'بندقية': 'rifle',
+    'مسدس': 'pistol',
+    'رشاش': 'smg',
+    'قناص': 'sniper',
+    'شوتقن': 'shotgun',
+    
+    # مخططات
+    'مخطوطة': 'blueprint',
+    'مخطوطه': 'blueprint',
+    'مخطط': 'blueprint',
+    'بلوبرنت': 'blueprint',
+    
+    # ندرة
+    'ذهبي': 'legendary',
+    'ذهبية': 'legendary',
+    'ذهبيه': 'legendary',
+    'اسطوري': 'legendary',
+    'أسطوري': 'legendary',
+    'بنفسجي': 'epic',
+    'ملحمي': 'epic',
+    'ازرق': 'rare',
+    'أزرق': 'rare',
+    'نادر': 'rare',
+    'اخضر': 'uncommon',
+    'أخضر': 'uncommon',
+    'ابيض': 'common',
+    'أبيض': 'common',
+    'عادي': 'common',
+    
+    # مواد
+    'مكونات': 'components',
+    'كهربائية': 'electrical',
+    'كهربائي': 'electrical',
+    'ميكانيكية': 'mechanical',
+    'متقدم': 'advanced',
+    'متقدمة': 'advanced',
+    'مواد': 'materials',
+    'خام': 'raw',
+    
+    # أماكن
+    'خريطة': 'map',
+    'منطقة': 'zone',
+    'مصنع': 'factory',
+    'مستودع': 'warehouse',
+    
+    # عناصر
+    'درع': 'armor',
+    'خوذة': 'helmet',
+    'صدرية': 'vest',
+    'حقيبة': 'backpack',
+    'شنطة': 'backpack',
+    
+    # أعداء
+    'روبوت': 'bot',
+    'عدو': 'enemy',
+    'زعيم': 'boss',
+    
+    # مهارات
+    'مهارة': 'skill',
+    'مهارات': 'skills',
+    'شجرة': 'tree',
+    
+    # تجارة
+    'تاجر': 'trader',
+    'متجر': 'shop',
+    'شراء': 'buy',
+    'بيع': 'sell'
+}
+
 # روابط الصور من GitHub
 IMAGES_BASE_URL = "https://raw.githubusercontent.com/RaidTheory/arcraiders-data/main/images"
 
@@ -262,7 +336,7 @@ class DatabaseManager:
 # ═══════════════════════════════════════════════════════════════
 
 class SearchEngine:
-    """محرك البحث الذكي - يبحث في قاعدة البيانات"""
+    """محرك البحث الذكي - يدعم العربي والإنجليزي"""
     
     def __init__(self, database: DatabaseManager):
         self.db = database
@@ -279,11 +353,53 @@ class SearchEngine:
         text = re.sub(r'\s+', ' ', text)
         return text
     
+    def translate_arabic_query(self, query: str) -> str:
+        """ترجمة الكلمات العربية للإنجليزية"""
+        words = query.split()
+        translated = []
+        
+        for word in words:
+            word_lower = word.lower()
+            if word_lower in ARABIC_TO_ENGLISH:
+                translated.append(ARABIC_TO_ENGLISH[word_lower])
+            else:
+                translated.append(word)
+        
+        return ' '.join(translated)
+    
     def calculate_similarity(self, text1: str, text2: str) -> float:
         """حساب نسبة التشابه بين نصين"""
         return SequenceMatcher(None, 
                                self.normalize_text(text1), 
                                self.normalize_text(text2)).ratio()
+    
+    def _calculate_match_score(self, query: str, text: str) -> float:
+        """حساب درجة التطابق"""
+        if not query or not text:
+            return 0
+        
+        # تطابق تام
+        if query == text:
+            return 1.0
+        
+        # يحتوي على الاستعلام كامل
+        if query in text:
+            return 0.85 + (len(query) / len(text)) * 0.1
+        
+        # كل كلمات البحث موجودة
+        query_words = query.split()
+        text_lower = text.lower()
+        matches = sum(1 for word in query_words if word in text_lower)
+        if matches == len(query_words) and query_words:
+            return 0.8 + (matches / len(query_words)) * 0.15
+        
+        # بعض الكلمات موجودة
+        if matches > 0 and query_words:
+            return 0.5 + (matches / len(query_words)) * 0.3
+        
+        # تشابه جزئي
+        similarity = self.calculate_similarity(query, text)
+        return similarity * 0.7
     
     def search(self, query: str, limit: int = 5) -> list:
         """البحث في قاعدة البيانات"""
@@ -291,6 +407,8 @@ class SearchEngine:
             return []
         
         query_normalized = self.normalize_text(query)
+        query_translated = self.translate_arabic_query(query_normalized)
+        
         results = []
         
         for item in self.db.all_data:
@@ -302,7 +420,7 @@ class SearchEngine:
             
             # البحث في الحقول المختلفة
             searchable_fields = ['name', 'title', 'displayName', 'description', 
-                                'category', 'type', 'location', 'nameKey']
+                                'category', 'type', 'location', 'nameKey', 'rarity']
             
             for field in searchable_fields:
                 if field not in item or not item[field]:
@@ -312,66 +430,44 @@ class SearchEngine:
                 
                 # لو القيمة dict (ترجمات متعددة)
                 if isinstance(field_value, dict):
-                    # نبحث في كل الترجمات
                     for lang, text in field_value.items():
                         if not text or not isinstance(text, str):
                             continue
                         
                         text_normalized = self.normalize_text(text)
                         
-                        # تطابق تام
-                        if query_normalized == text_normalized:
-                            score = 1.0
-                            matched_field = field
-                            break
+                        # بحث بالكلمة الأصلية
+                        s1 = self._calculate_match_score(query_normalized, text_normalized)
+                        # بحث بالكلمة المترجمة
+                        s2 = self._calculate_match_score(query_translated, text_normalized)
                         
-                        # يحتوي على الاستعلام
-                        if query_normalized in text_normalized:
-                            current_score = 0.8 + (len(query_normalized) / len(text_normalized)) * 0.2
-                            if current_score > score:
-                                score = current_score
-                                matched_field = field
-                        
-                        # تشابه جزئي
-                        similarity = self.calculate_similarity(query, text)
-                        if similarity > score:
-                            score = similarity
+                        current_score = max(s1, s2)
+                        if current_score > score:
+                            score = current_score
                             matched_field = field
                     
-                    if score == 1.0:
+                    if score >= 0.95:
                         break
                 
                 # لو القيمة string عادي
                 elif isinstance(field_value, str):
                     field_normalized = self.normalize_text(field_value)
                     
-                    # تطابق تام
-                    if query_normalized == field_normalized:
-                        score = 1.0
-                        matched_field = field
-                        break
+                    s1 = self._calculate_match_score(query_normalized, field_normalized)
+                    s2 = self._calculate_match_score(query_translated, field_normalized)
                     
-                    # يحتوي على الاستعلام
-                    if query_normalized in field_normalized:
-                        current_score = 0.8 + (len(query_normalized) / len(field_normalized)) * 0.2
-                        if current_score > score:
-                            score = current_score
-                            matched_field = field
-                    
-                    # تشابه جزئي
-                    similarity = self.calculate_similarity(query, field_value)
-                    if similarity > score:
-                        score = similarity
+                    current_score = max(s1, s2)
+                    if current_score > score:
+                        score = current_score
                         matched_field = field
             
-            if score > 0.3:  # الحد الأدنى للتشابه
+            if score > 0.3:
                 results.append({
                     'item': item,
                     'score': score,
                     'matched_field': matched_field
                 })
         
-        # ترتيب النتائج حسب الدرجة
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:limit]
     
