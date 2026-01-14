@@ -59,6 +59,19 @@ ARABIC_TO_ENGLISH = {
     'مخطط': 'blueprint',
     'بلوبرنت': 'blueprint',
     
+    # صناعة
+    'تصنيع': 'craft',
+    'صناعة': 'craft',
+    'صنع': 'craft',
+    'ادوات': 'materials',
+    'أدوات': 'materials',
+    'متطلبات': 'requirements',
+    'مواد': 'materials',
+    'عطني': '',
+    'اعطني': '',
+    'ابي': '',
+    'ابغى': '',
+    
     # ندرة
     'ذهبي': 'legendary',
     'ذهبية': 'legendary',
@@ -76,14 +89,13 @@ ARABIC_TO_ENGLISH = {
     'أبيض': 'common',
     'عادي': 'common',
     
-    # مواد
+    # مكونات
     'مكونات': 'components',
     'كهربائية': 'electrical',
     'كهربائي': 'electrical',
     'ميكانيكية': 'mechanical',
     'متقدم': 'advanced',
     'متقدمة': 'advanced',
-    'مواد': 'materials',
     'خام': 'raw',
     
     # أماكن
@@ -1376,56 +1388,73 @@ async def on_message(message: discord.Message):
     # البحث في قاعدة البيانات
     results = bot.search_engine.search(question, limit=1)
     
-    if results and results[0]['score'] > 0.5:
+    if results and results[0]['score'] > 0.6:
         # وجدنا نتيجة جيدة!
         result = results[0]
         item = result['item']
         
-        # استخراج الوصف وترجمته
-        description = None
-        if 'description' in item:
-            desc_val = item['description']
-            if isinstance(desc_val, dict):
-                description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-            else:
-                description = str(desc_val)
+        # تحقق إضافي: لو السؤال فيه اسم محدد، نتأكد النتيجة تطابقه
+        item_name = bot.search_engine.extract_name(item).lower()
         
-        # ترجمة الوصف للعربي
-        translated_desc = None
-        if description and description != 'لا يوجد وصف':
-            translated_desc = await bot.ai_manager.translate_to_arabic(description)
+        # استخراج الكلمات الإنجليزية من السؤال (أسماء العناصر)
+        english_words = re.findall(r'[a-zA-Z]+', content)
         
-        embed = EmbedBuilder.item_embed(item, translated_desc)
+        # لو في اسم إنجليزي بالسؤال، نتأكد موجود بالنتيجة
+        skip_result = False
+        if english_words:
+            main_word = max(english_words, key=len).lower()  # أطول كلمة إنجليزية
+            if len(main_word) > 3 and main_word not in item_name:
+                # الاسم المطلوب مو موجود بالنتيجة - نعتبرها غلط
+                skip_result = True
         
-        # كشف لو السؤال عن موقع
-        location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
-        is_location_question = any(keyword in content_lower for keyword in location_keywords)
-        
-        # إرسال الرد الأول (معلومات العنصر)
-        reply = await message.reply(embed=embed)
-        
-        # لو سؤال عن موقع، نرسل صورة الخريطة
-        if is_location_question:
-            location = item.get('location') or item.get('spawn_location') or item.get('map')
-            if location:
-                if isinstance(location, dict):
-                    location = location.get('en') or list(location.values())[0]
-                
-                # إرسال صورة الخريطة
-                map_embed = EmbedBuilder.map_embed(str(location), item)
-                await message.channel.send(embed=map_embed)
-        
-        # حفظ السياق
-        name = bot.search_engine.extract_name(item)
-        bot.context_manager.set_context(message.author.id, name, item)
-        
-        # إضافة reactions بسيطة
-        await reply.add_reaction('✅')  # إجابة صحيحة
-        await reply.add_reaction('❌')  # إجابة خاطئة
-        
-        bot.questions_answered += 1
+        if not skip_result:
+            # استخراج الوصف وترجمته
+            description = None
+            if 'description' in item:
+                desc_val = item['description']
+                if isinstance(desc_val, dict):
+                    description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
+                else:
+                    description = str(desc_val)
+            
+            # ترجمة الوصف للعربي
+            translated_desc = None
+            if description and description != 'لا يوجد وصف':
+                translated_desc = await bot.ai_manager.translate_to_arabic(description)
+            
+            embed = EmbedBuilder.item_embed(item, translated_desc)
+            
+            # كشف لو السؤال عن موقع
+            location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
+            is_location_question = any(keyword in content_lower for keyword in location_keywords)
+            
+            # إرسال الرد الأول (معلومات العنصر)
+            reply = await message.reply(embed=embed)
+            
+            # لو سؤال عن موقع، نرسل صورة الخريطة
+            if is_location_question:
+                location = item.get('location') or item.get('spawn_location') or item.get('map')
+                if location:
+                    if isinstance(location, dict):
+                        location = location.get('en') or list(location.values())[0]
+                    
+                    # إرسال صورة الخريطة
+                    map_embed = EmbedBuilder.map_embed(str(location), item)
+                    await message.channel.send(embed=map_embed)
+            
+            # حفظ السياق
+            name = bot.search_engine.extract_name(item)
+            bot.context_manager.set_context(message.author.id, name, item)
+            
+            # إضافة reactions بسيطة
+            await reply.add_reaction('✅')  # إجابة صحيحة
+            await reply.add_reaction('❌')  # إجابة خاطئة
+            
+            bot.questions_answered += 1
+            return
     
-    elif results and results[0]['score'] > 0.3:
+    # لو skip_result أو النتيجة ضعيفة
+    if results and results[0]['score'] > 0.3:
         # نتيجة متوسطة - نعرض اقتراحات
         suggestions = bot.search_engine.find_similar(question, limit=3)
         
