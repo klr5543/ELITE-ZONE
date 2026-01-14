@@ -68,9 +68,12 @@ class DatabaseManager:
     def __init__(self):
         self.items = []
         self.quests = []
+        self.hideout = []
+        self.bots = []
         self.maps = []
-        self.traders = []
-        self.workshop = []
+        self.trades = []
+        self.skills = []
+        self.projects = []
         self.all_data = []
         self.loaded = False
         
@@ -83,6 +86,10 @@ class DatabaseManager:
             return False
         
         try:
+            # ═══════════════════════════════════════════════════
+            # تحميل المجلدات
+            # ═══════════════════════════════════════════════════
+            
             # تحميل Items
             items_path = base_path / 'items'
             if items_path.exists():
@@ -92,21 +99,7 @@ class DatabaseManager:
                             data = json.load(f)
                             if isinstance(data, list):
                                 self.items.extend(data)
-                            else:
-                                self.items.append(data)
-                    except Exception as e:
-                        logger.error(f"خطأ في تحميل {file}: {e}")
-            
-            # تحميل Items In-Game
-            items_ingame_path = base_path / 'items_ingame'
-            if items_ingame_path.exists():
-                for file in items_ingame_path.glob('*.json'):
-                    try:
-                        with open(file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                self.items.extend(data)
-                            else:
+                            elif isinstance(data, dict):
                                 self.items.append(data)
                     except Exception as e:
                         logger.error(f"خطأ في تحميل {file}: {e}")
@@ -120,72 +113,124 @@ class DatabaseManager:
                             data = json.load(f)
                             if isinstance(data, list):
                                 self.quests.extend(data)
-                            else:
+                            elif isinstance(data, dict):
                                 self.quests.append(data)
                     except Exception as e:
                         logger.error(f"خطأ في تحميل {file}: {e}")
             
-            # تحميل Maps
-            maps_path = base_path / 'maps'
-            if maps_path.exists():
-                for file in maps_path.glob('*.json'):
+            # تحميل Hideout
+            hideout_path = base_path / 'hideout'
+            if hideout_path.exists():
+                for file in hideout_path.glob('*.json'):
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                self.hideout.extend(data)
+                            elif isinstance(data, dict):
+                                self.hideout.append(data)
+                    except Exception as e:
+                        logger.error(f"خطأ في تحميل {file}: {e}")
+            
+            # تحميل Map Events
+            mapevents_path = base_path / 'map-events'
+            if mapevents_path.exists():
+                for file in mapevents_path.glob('*.json'):
                     try:
                         with open(file, 'r', encoding='utf-8') as f:
                             data = json.load(f)
                             if isinstance(data, list):
                                 self.maps.extend(data)
-                            else:
+                            elif isinstance(data, dict):
                                 self.maps.append(data)
                     except Exception as e:
                         logger.error(f"خطأ في تحميل {file}: {e}")
             
-            # تحميل Traders
-            traders_path = base_path / 'traders'
-            if traders_path.exists():
-                for file in traders_path.glob('*.json'):
-                    try:
-                        with open(file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                self.traders.extend(data)
-                            else:
-                                self.traders.append(data)
-                    except Exception as e:
-                        logger.error(f"خطأ في تحميل {file}: {e}")
-            
-            # تحميل Workshop
-            workshop_path = base_path / 'workshop'
-            if workshop_path.exists():
-                for file in workshop_path.glob('*.json'):
-                    try:
-                        with open(file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                self.workshop.extend(data)
-                            else:
-                                self.workshop.append(data)
-                    except Exception as e:
-                        logger.error(f"خطأ في تحميل {file}: {e}")
-            
+            # ═══════════════════════════════════════════════════
             # تحميل ملفات JSON الرئيسية
-            json_files = ['bots.json', 'maps.json', 'trades.json', 'skillNodes.json', 'projects.json']
-            for json_file in json_files:
-                file_path = base_path / json_file
-                if file_path.exists():
-                    try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                self.all_data.extend(data)
-                    except Exception as e:
-                        logger.error(f"خطأ في تحميل {json_file}: {e}")
+            # ═══════════════════════════════════════════════════
             
+            # bots.json - الأعداء
+            bots_file = base_path / 'bots.json'
+            if bots_file.exists():
+                try:
+                    with open(bots_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            self.bots = data
+                        elif isinstance(data, dict):
+                            self.bots = [data]
+                    logger.info(f"✅ تم تحميل {len(self.bots)} بوت/عدو")
+                except Exception as e:
+                    logger.error(f"خطأ في تحميل bots.json: {e}")
+            
+            # maps.json - الخرائط
+            maps_file = base_path / 'maps.json'
+            if maps_file.exists():
+                try:
+                    with open(maps_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            self.maps = data
+                        elif isinstance(data, dict):
+                            self.maps = [data]
+                    logger.info(f"✅ تم تحميل {len(self.maps)} خريطة")
+                except Exception as e:
+                    logger.error(f"خطأ في تحميل maps.json: {e}")
+            
+            # trades.json - التجارة
+            trades_file = base_path / 'trades.json'
+            if trades_file.exists():
+                try:
+                    with open(trades_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            self.trades = data
+                        elif isinstance(data, dict):
+                            self.trades = [data]
+                    logger.info(f"✅ تم تحميل {len(self.trades)} تجارة")
+                except Exception as e:
+                    logger.error(f"خطأ في تحميل trades.json: {e}")
+            
+            # skillNodes.json - المهارات
+            skills_file = base_path / 'skillNodes.json'
+            if skills_file.exists():
+                try:
+                    with open(skills_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            self.skills = data
+                        elif isinstance(data, dict):
+                            self.skills = [data]
+                    logger.info(f"✅ تم تحميل {len(self.skills)} مهارة")
+                except Exception as e:
+                    logger.error(f"خطأ في تحميل skillNodes.json: {e}")
+            
+            # projects.json - المشاريع
+            projects_file = base_path / 'projects.json'
+            if projects_file.exists():
+                try:
+                    with open(projects_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            self.projects = data
+                        elif isinstance(data, dict):
+                            self.projects = [data]
+                    logger.info(f"✅ تم تحميل {len(self.projects)} مشروع")
+                except Exception as e:
+                    logger.error(f"خطأ في تحميل projects.json: {e}")
+            
+            # ═══════════════════════════════════════════════════
             # دمج كل البيانات
+            # ═══════════════════════════════════════════════════
             self.all_data.extend(self.items)
             self.all_data.extend(self.quests)
+            self.all_data.extend(self.hideout)
+            self.all_data.extend(self.bots)
             self.all_data.extend(self.maps)
-            self.all_data.extend(self.traders)
-            self.all_data.extend(self.workshop)
+            self.all_data.extend(self.trades)
+            self.all_data.extend(self.skills)
+            self.all_data.extend(self.projects)
             
             self.loaded = True
             logger.info(f"✅ تم تحميل {len(self.all_data)} عنصر من قاعدة البيانات")
@@ -200,9 +245,12 @@ class DatabaseManager:
         return {
             'items': len(self.items),
             'quests': len(self.quests),
+            'hideout': len(self.hideout),
+            'bots': len(self.bots),
             'maps': len(self.maps),
-            'traders': len(self.traders),
-            'workshop': len(self.workshop),
+            'trades': len(self.trades),
+            'skills': len(self.skills),
+            'projects': len(self.projects),
             'total': len(self.all_data)
         }
 
@@ -715,10 +763,13 @@ class EmbedBuilder:
         # إحصائيات قاعدة البيانات
         db_text = f"""
 📦 العناصر: **{db_stats['items']:,}**
-📜 المهام: **{db_stats['quests']:,}**
+📜 المهمات: **{db_stats['quests']:,}**
+🏠 الملاجئ: **{db_stats['hideout']:,}**
+🤖 البوتات: **{db_stats['bots']:,}**
 🗺️ الخرائط: **{db_stats['maps']:,}**
-🏪 التجار: **{db_stats['traders']:,}**
-🔧 الورشة: **{db_stats['workshop']:,}**
+💰 التجارة: **{db_stats['trades']:,}**
+⚡ المهارات: **{db_stats['skills']:,}**
+🔧 المشاريع: **{db_stats['projects']:,}**
 ━━━━━━━━━━━━━━━
 📚 المجموع: **{db_stats['total']:,}**
 """
