@@ -1479,18 +1479,36 @@ async def on_message(message: discord.Message):
     crafting_keywords = ['ادوات', 'أدوات', 'تصنع', 'تسوي', 'تصنيع', 'recipe', 'craft', 'مكونات', 'مخطط']
     is_crafting_question = any(keyword in content_lower for keyword in crafting_keywords)
     
+    english_words = re.findall(r'[a-zA-Z]+', content)
+    search_query = question
+    main_word = None
+    if is_crafting_question and english_words:
+        main_word = max(english_words, key=len).lower()
+        search_query = main_word
+    
     # البحث في قاعدة البيانات
     ai_configured = is_ai_configured()
     use_ai = should_use_ai(question) and ai_configured
-    results = bot.search_engine.search(question, limit=1)
+    results = bot.search_engine.search(search_query, limit=5 if is_crafting_question else 1)
+    
+    if is_crafting_question and results:
+        recipe_candidates = []
+        for r in results:
+            item_candidate = r['item']
+            recipe_candidate = item_candidate.get('recipe') if isinstance(item_candidate, dict) else None
+            if isinstance(recipe_candidate, dict) and recipe_candidate:
+                recipe_candidates.append(r)
+        if recipe_candidates:
+            best = max(recipe_candidates, key=lambda x: x['score'])
+            results = [best]
+        else:
+            results = [results[0]]
     
     if results and (results[0]['score'] > 0.6 or (is_crafting_question and results[0]['score'] > 0.3)):
         result = results[0]
         item = result['item']
         
         item_name = bot.search_engine.extract_name(item).lower()
-        
-        english_words = re.findall(r'[a-zA-Z]+', content)
         
         skip_result = False
         if not is_crafting_question and english_words:
@@ -1515,6 +1533,10 @@ async def on_message(message: discord.Message):
             
             location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
             is_location_question = any(keyword in content_lower for keyword in location_keywords)
+            
+            obtain_keywords = ['كيف احصل', 'كيف أجيب', 'كيف اجيب', 'من وين', 'من وين اجيب', 'من وين احصل', 'drop', 'drops', 'loot', 'يطيح', 'يندر', 'يطلع']
+            is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
+            
             if is_crafting_question:
                 recipe = item.get('recipe')
                 if isinstance(recipe, dict) and recipe:
@@ -1526,6 +1548,21 @@ async def on_message(message: discord.Message):
                         lines.append(f"- {name}: {amount}")
                     if lines:
                         embed.add_field(name="مكونات التصنيع", value="\n".join(lines), inline=False)
+            
+            if is_obtain_question:
+                obtain_lines = []
+                found_in = item.get('foundIn')
+                if found_in:
+                    obtain_lines.append(f"- يوجد في: {found_in}")
+                craft_bench = item.get('craftBench')
+                if craft_bench:
+                    obtain_lines.append(f"- يتصنع في: {craft_bench}")
+                if not is_crafting_question:
+                    recipe = item.get('recipe')
+                    if isinstance(recipe, dict) and recipe:
+                        obtain_lines.append("- له وصفة تصنيع، شوف تفاصيل التصنيع")
+                if obtain_lines:
+                    embed.add_field(name="طرق الحصول", value="\n".join(obtain_lines), inline=False)
             
             reply = await message.reply(embed=embed)
             
