@@ -793,6 +793,8 @@ class AIManager:
 2. كن مختصراً ومباشراً قدر الإمكان، لا تدوّن مقالات.
 3. لو ما تعرف الجواب منطقياً، قل ذلك بصراحة وبدون اختراع معلومات.
 4. ركّز دائماً على معلومات اللعبة، وتجنب أي مواضيع خارجها.
+5. اذكر أسماء الأسلحة والموارد والقطع بالإنجليزية كما هي في اللعبة.
+6. لا تعِد نسخ نفس الجداول التي في بطاقة البوت؛ ركّز على الشرح (متى وأين ولماذا).
 """
 
         # تخصيص الرد حسب الـ mode
@@ -1128,22 +1130,16 @@ class EmbedBuilder:
     
     @staticmethod
     def _find_resource_name(resource_id: str, database_manager) -> str:
-        """البحث عن اسم المورد الحقيقي في قاعدة البيانات"""
         if not database_manager or not database_manager.loaded:
             return None
-        
-        # البحث في قاعدة البيانات عن المورد
         for item in database_manager.items:
             if not isinstance(item, dict):
                 continue
-            
             item_id = item.get('id', '')
             if item_id == resource_id:
-                # استخراج الاسم الإنجليزي
                 name = EmbedBuilder.extract_field(item, 'name')
                 if name:
                     return name
-        
         return None
     
     @staticmethod
@@ -1343,6 +1339,20 @@ class EmbedBuilder:
         if img_url:
             embed.set_thumbnail(url=img_url)
         
+        embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
+        return embed
+    
+    @staticmethod
+    def resource_preview_embed(item: dict) -> discord.Embed:
+        name = EmbedBuilder.extract_field(item, 'name') or "Unknown"
+        embed = discord.Embed(
+            title=name,
+            color=COLORS["primary"],
+            timestamp=datetime.now()
+        )
+        img_url = EmbedBuilder.get_image_url(item)
+        if img_url:
+            embed.set_thumbnail(url=img_url)
         embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
         return embed
     
@@ -2226,13 +2236,44 @@ async def on_message(message: discord.Message):
             obtain_keywords = ['احصل', 'أحصل', 'الحصول', 'اطلع', 'أطلع', 'drop', 'get', 'farm', 'اول مره', 'أول مره', 'اول مرة', 'أول مرة']
             upgrade_keywords = ['تطوير', 'ترقية', 'طور', 'اطور', 'أطور', 'قطع تطوير', 'upgrade']
             strength_keywords = ['قوته', 'قوي', 'قوية', 'قوتها', 'يستاهل', 'يسوى', 'افضل', 'أقوى', 'strong', 'meta']
+            dismantle_keywords = ['فك', 'فكك', 'تفكيك', 'لو فككته', 'كسرت', 'كسر', 'recycle', 'salvage', 'dismantle']
             is_location_question = any(keyword in content_lower for keyword in location_keywords)
             is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
             is_upgrade_question = any(keyword in content_lower for keyword in upgrade_keywords)
             is_strength_question = any(keyword in content_lower for keyword in strength_keywords)
+            is_dismantle_question = any(keyword in content_lower for keyword in dismantle_keywords)
             
-            # إرسال الرد الأول (معلومات العنصر)
             reply = await message.reply(embed=embed)
+            
+            resource_ids = set()
+            recipe = item.get('recipe')
+            upgrade_cost = item.get('upgradeCost')
+            recycles_into = item.get('recyclesInto')
+            salvages_into = item.get('salvagesInto')
+            if isinstance(recipe, dict):
+                resource_ids.update(recipe.keys())
+            if isinstance(upgrade_cost, dict):
+                resource_ids.update(upgrade_cost.keys())
+            if isinstance(recycles_into, dict):
+                resource_ids.update(recycles_into.keys())
+            if isinstance(salvages_into, dict):
+                resource_ids.update(salvages_into.keys())
+            
+            if resource_ids and bot.database and bot.database.items:
+                sent = 0
+                for res_id in resource_ids:
+                    res_item = None
+                    for base_item in bot.database.items:
+                        if isinstance(base_item, dict) and base_item.get('id') == res_id:
+                            res_item = base_item
+                            break
+                    if not res_item:
+                        continue
+                    res_embed = EmbedBuilder.resource_preview_embed(res_item)
+                    await message.channel.send(embed=res_embed)
+                    sent += 1
+                    if sent >= 4:
+                        break
             
             if is_location_question:
                 location = item.get('location') or item.get('spawn_location') or item.get('map')
@@ -2243,7 +2284,14 @@ async def on_message(message: discord.Message):
                     map_embed = EmbedBuilder.map_embed(str(location), item)
                     await message.channel.send(embed=map_embed)
             
-            if is_upgrade_question:
+            if is_dismantle_question:
+                followup_question = (
+                    f"اللاعب يسأل ماذا يحصل لو فكك أو أعاد تدوير العنصر {bot.search_engine.extract_name(item)} في ARC Raiders. "
+                    f"السؤال الأصلي: \"{content}\". بالاعتماد على بيانات اللعبة في السياق، اشرح بالعربية ما هي الموارد التي يحصل عليها عند التفكيك "
+                    f"(recyclesInto / salvagesInto) وهل من المنطقي تفكيكه أم الاحتفاظ به."
+                )
+                await ask_ai_and_reply(message, followup_question)
+            elif is_upgrade_question:
                 followup_question = (
                     f"اللاعب يسأل عن متطلبات أو قطع تطوير العنصر {bot.search_engine.extract_name(item)} في ARC Raiders. "
                     f"السؤال الأصلي: \"{content}\". بالاعتماد على بيانات اللعبة في السياق، اشرح بالعربية وبشكل واضح ما هي موارد التطوير المطلوبة "
