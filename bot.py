@@ -1557,11 +1557,20 @@ async def on_message(message: discord.Message):
     
     # تفضيل العنصر الأساسي على البلوبربنت في أسئلة الطرق/المكان
     if (is_obtain_question or is_location_question) and results:
-        non_blueprints = [r for r in results if 'blueprint' not in bot.search_engine.extract_name(r['item']).lower() and 'Blueprint' not in r['item'].get('type', '')]
+        non_blueprints = [
+            r for r in results
+            if 'blueprint' not in bot.search_engine.extract_name(r['item']).lower()
+            and 'Blueprint' not in r['item'].get('type', '')
+        ]
         if non_blueprints:
             results = non_blueprints
     
-    if results and (results[0]['score'] > 0.6 or (is_crafting_question and results[0]['score'] > 0.3)):
+    # عتبة المطابقة: أقل في أسئلة الدروب/المكان/التصنيع
+    match_threshold = 0.6
+    if is_crafting_question or is_obtain_question or is_location_question:
+        match_threshold = 0.3
+    
+    if results and results[0]['score'] > match_threshold:
         result = results[0]
         item = result['item']
         
