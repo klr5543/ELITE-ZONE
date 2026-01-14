@@ -898,15 +898,14 @@ class ContextManager:
         # كلمات تدل على سؤال متابعة
         follow_up_keywords = [
             'نسبة', 'spawn', 'الموقع', 'location', 'وين', 'where',
-            'كم', 'how much', 'الندرة', 'rarity', 'كيف', 'how',
-            'طيب', 'وش', 'ايش', 'ليش', 'متى', 'هل', 'فين'
+            'كم', 'how much', 'الندرة', 'rarity'
         ]
         
         question_lower = question.lower()
         is_follow_up = any(keyword in question_lower for keyword in follow_up_keywords)
         
-        # إذا السؤال قصير أو يحتوي كلمات متابعة
-        if is_follow_up or len(question.split()) <= 3:
+        # إذا السؤال قصير جداً ويبدو متابعة
+        if is_follow_up and len(question.split()) <= 5:
             return f"{context['item']} {question}"
         
         return question
@@ -1479,6 +1478,19 @@ async def on_message(message: discord.Message):
     crafting_keywords = ['ادوات', 'أدوات', 'تصنع', 'تسوي', 'تصنيع', 'recipe', 'craft', 'مكونات', 'مخطط']
     is_crafting_question = any(keyword in content_lower for keyword in crafting_keywords)
     
+    location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
+    is_location_question = any(keyword in content_lower for keyword in location_keywords)
+    
+    obtain_keywords = [
+        'كيف احصل', 'كيف أجيب', 'كيف اجيب',
+        'من وين', 'من وين اجيب', 'من وين احصل',
+        'وين القا', 'وين القى', 'وين القاء',
+        'وش الفلارات', 'الفلارات', 'فلارات',
+        'drop', 'drops', 'loot',
+        'يطيح', 'يطيحه', 'يندر', 'يطلع'
+    ]
+    is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
+    
     english_words = re.findall(r'[a-zA-Z]+', content)
     search_query = question
     main_word = None
@@ -1486,9 +1498,11 @@ async def on_message(message: discord.Message):
         main_word = max(english_words, key=len).lower()
         search_query = main_word
     
-    # البحث في قاعدة البيانات
     ai_configured = is_ai_configured()
     use_ai = should_use_ai(question) and ai_configured
+    if is_crafting_question or is_obtain_question or is_location_question:
+        use_ai = False
+    
     results = bot.search_engine.search(search_query, limit=5 if is_crafting_question else 1)
     
     if is_crafting_question and results:
@@ -1530,19 +1544,6 @@ async def on_message(message: discord.Message):
                 translated_desc = await bot.ai_manager.translate_to_arabic(description)
             
             embed = EmbedBuilder.item_embed(item, translated_desc)
-            
-            location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
-            is_location_question = any(keyword in content_lower for keyword in location_keywords)
-            
-            obtain_keywords = [
-                'كيف احصل', 'كيف أجيب', 'كيف اجيب',
-                'من وين', 'من وين اجيب', 'من وين احصل',
-                'وين القا', 'وين القى', 'وين القاء',
-                'وش الفلارات', 'الفلارات', 'فلارات',
-                'drop', 'drops', 'loot',
-                'يطيح', 'يطيحه', 'يندر', 'يطلع'
-            ]
-            is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
             
             if is_crafting_question:
                 recipe = item.get('recipe')
