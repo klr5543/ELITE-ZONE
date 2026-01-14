@@ -482,6 +482,47 @@ class SearchEngine:
                 best_tier = tier
                 best_item = candidate
         return best_item
+
+    def find_quests_rewarding_item(self, item_id: str) -> list:
+        """إيجاد المهام التي تعطي هذا العنصر كجائزة"""
+        if not self.db or not self.db.quests:
+            return []
+        rewards_quests = []
+        for quest in self.db.quests:
+            if not isinstance(quest, dict):
+                continue
+            rewards = quest.get("rewardItemIds") or quest.get("grantedItemIds")
+            if not isinstance(rewards, list):
+                continue
+            for entry in rewards:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("itemId") == item_id:
+                    rewards_quests.append(quest)
+                    break
+        return rewards_quests
+    
+    def find_hideout_sources_for_item(self, item_id: str) -> list:
+        """إيجاد محطات الـ Hideout التي تنتج/تستهلك العنصر"""
+        if not self.db or not self.db.hideout:
+            return []
+        sources = []
+        for module in self.db.hideout:
+            if not isinstance(module, dict):
+                continue
+            productions = module.get("produces") or module.get("production") or []
+            if isinstance(productions, list):
+                for p in productions:
+                    if isinstance(p, dict) and p.get("itemId") == item_id:
+                        sources.append(module)
+                        break
+            requirements = module.get("requirements") or []
+            if isinstance(requirements, list):
+                for r in requirements:
+                    if isinstance(r, dict) and r.get("itemId") == item_id:
+                        sources.append(module)
+                        break
+        return sources
     
     def search(self, query: str, limit: int = 5) -> list:
         """البحث في قاعدة البيانات"""
@@ -2169,9 +2210,11 @@ async def on_message(message: discord.Message):
             
             embed = EmbedBuilder.item_embed(item, translated_desc, bot.database)
             
-            # كشف لو السؤال عن موقع
-            location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
+            # كشف نوع السؤال (موقع / طريقة الحصول لأول مرة)
+            location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'where', 'location', 'find']
+            obtain_keywords = ['احصل', 'أحصل', 'الحصول', 'اطلع', 'أطلع', 'drop', 'get', 'farm', 'اول مره', 'أول مره', 'اول مرة', 'أول مرة']
             is_location_question = any(keyword in content_lower for keyword in location_keywords)
+            is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
             
             # إرسال الرد الأول (معلومات العنصر)
             reply = await message.reply(embed=embed)
@@ -2186,6 +2229,11 @@ async def on_message(message: discord.Message):
                     # إرسال صورة الخريطة
                     map_embed = EmbedBuilder.map_embed(str(location), item)
                     await message.channel.send(embed=map_embed)
+            
+            # لو السؤال عن طريقة الحصول/الفارم لأول مرة، نستخدم AI مع سياق خاص
+            if is_obtain_question:
+                followup_question = f"كيف أقدر أحصل على {bot.search_engine.extract_name(item)} لأول مرة في ARC Raiders؟ وضح بالترتيب أفضل الطرق الثابتة (مهام، دروب، تصنيع، Hideout) إذا كانت موجودة."
+                await ask_ai_and_reply(message, followup_question)
             
             # حفظ السياق
             name = bot.search_engine.extract_name(item)
@@ -2250,10 +2298,19 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
                 else:
                     desc = ""
                 if desc:
-                    desc = desc.replace('\n', ' ')[:200]
-                    snippets.append(f"- {name}: {desc}")
+                    desc = desc.replace('\n', ' ')[:180]
+                item_id = str(item.get("id", ""))
+                extra_parts = []
+                quests = bot.search_engine.find_quests_rewarding_item(item_id)
+                if quests:
+                    extra_parts.append(f"يُكافِئ عليه في {len(quests)} مهمة على الأقل.")
+                hideout_sources = bot.search_engine.find_hideout_sources_for_item(item_id)
+                if hideout_sources:
+                    extra_parts.append("مرتبط بوحدات الـ Hideout أو التصنيع/التفكيك.")
+                extra = (" " + " ".join(extra_parts)) if extra_parts else ""
+                snippets.append(f"- {name} ({item_id}): {desc}{extra}")
             if snippets:
-                knowledge_context = "مقتطفات قصيرة من بيانات ARC Raiders:\n" + "\n".join(snippets)
+                knowledge_context = "مقتطفات قصيرة من بيانات ARC Raiders (عناصر + مهام + Hideout):\n" + "\n".join(snippets)
         except Exception as e:
             logger.warning(f"خطأ في بناء سياق بيانات اللعبة للـ AI: {e}")
     
