@@ -42,6 +42,9 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 BOT_NAME = "دليل"
 BOT_VERSION = "2.0.0"
 
+# روابط الصور من GitHub
+IMAGES_BASE_URL = "https://raw.githubusercontent.com/RaidTheory/arcraiders-data/main/images"
+
 # Colors
 COLORS = {
     "success": 0x2ecc71,    # أخضر
@@ -823,6 +826,40 @@ class EmbedBuilder:
         return str(value) if value else None
     
     @staticmethod
+    def get_image_url(item: dict) -> str:
+        """الحصول على رابط صورة العنصر"""
+        # أولاً: لو في رابط صورة مباشر
+        img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
+        if img_url and isinstance(img_url, str) and img_url.startswith('http'):
+            return img_url
+        
+        # ثانياً: بناء الرابط من الـ id
+        item_id = item.get('id') or item.get('itemId') or item.get('slug')
+        if item_id:
+            # تحديد نوع المجلد
+            item_type = item.get('type') or item.get('category') or ''
+            if isinstance(item_type, dict):
+                item_type = item_type.get('en', '')
+            
+            item_type_lower = str(item_type).lower()
+            
+            # تحديد المجلد المناسب
+            if 'bot' in item_type_lower or 'enemy' in item_type_lower:
+                folder = 'bots'
+            elif 'map' in item_type_lower:
+                folder = 'maps'
+            elif 'trader' in item_type_lower:
+                folder = 'traders'
+            elif 'workshop' in item_type_lower:
+                folder = 'workshop'
+            else:
+                folder = 'items'
+            
+            return f"{IMAGES_BASE_URL}/{folder}/{item_id}.png"
+        
+        return None
+    
+    @staticmethod
     def item_embed(item: dict, translated_desc: str = None) -> discord.Embed:
         """إنشاء Embed لعنصر من اللعبة - الاسم إنجليزي والباقي عربي"""
         # استخراج الاسم - الإنجليزي
@@ -880,6 +917,7 @@ class EmbedBuilder:
             }.get(rarity.lower(), rarity)
             embed.add_field(name="💎 الندرة", value=rarity_ar, inline=True)
         
+        # الموقع مع رابط الخريطة
         location = EmbedBuilder.extract_field(item, 'location')
         if location:
             embed.add_field(name="📍 الموقع", value=location, inline=True)
@@ -892,10 +930,34 @@ class EmbedBuilder:
         if price:
             embed.add_field(name="💰 السعر", value=str(price), inline=True)
         
-        # صورة العنصر
-        img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
-        if img_url and isinstance(img_url, str) and img_url.startswith('http'):
+        # صورة العنصر المصغرة (Thumbnail)
+        img_url = EmbedBuilder.get_image_url(item)
+        if img_url:
             embed.set_thumbnail(url=img_url)
+        
+        embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
+        return embed
+    
+    @staticmethod
+    def map_embed(map_name: str, map_data: dict = None) -> discord.Embed:
+        """إنشاء Embed للخريطة مع الصورة"""
+        embed = discord.Embed(
+            title=f"🗺️ خريطة: {map_name}",
+            color=COLORS["info"],
+            timestamp=datetime.now()
+        )
+        
+        # صورة الخريطة الكبيرة
+        map_id = map_data.get('id') if map_data else map_name.lower().replace(' ', '_')
+        map_url = f"{IMAGES_BASE_URL}/maps/{map_id}.png"
+        embed.set_image(url=map_url)
+        
+        if map_data:
+            if map_data.get('description'):
+                desc = map_data['description']
+                if isinstance(desc, dict):
+                    desc = desc.get('en', '')
+                embed.description = desc[:500]
         
         embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
         return embed
@@ -1238,7 +1300,24 @@ async def on_message(message: discord.Message):
             translated_desc = await bot.ai_manager.translate_to_arabic(description)
         
         embed = EmbedBuilder.item_embed(item, translated_desc)
+        
+        # كشف لو السؤال عن موقع
+        location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
+        is_location_question = any(keyword in content_lower for keyword in location_keywords)
+        
+        # إرسال الرد الأول (معلومات العنصر)
         reply = await message.reply(embed=embed)
+        
+        # لو سؤال عن موقع، نرسل صورة الخريطة
+        if is_location_question:
+            location = item.get('location') or item.get('spawn_location') or item.get('map')
+            if location:
+                if isinstance(location, dict):
+                    location = location.get('en') or list(location.values())[0]
+                
+                # إرسال صورة الخريطة
+                map_embed = EmbedBuilder.map_embed(str(location), item)
+                await message.channel.send(embed=map_embed)
         
         # حفظ السياق
         name = bot.search_engine.extract_name(item)
