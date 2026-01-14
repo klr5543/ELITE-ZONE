@@ -421,6 +421,54 @@ class AIManager:
             'anthropic': 0,
             'google': 0
         }
+        # كاش للترجمات عشان ما نكرر
+        self.translation_cache = {}
+    
+    async def translate_to_arabic(self, text: str) -> str:
+        """ترجمة نص للعربي - سريع بـ Groq"""
+        if not text or len(text) < 3:
+            return text
+        
+        # تحقق من الكاش
+        cache_key = text[:100]  # أول 100 حرف كـ key
+        if cache_key in self.translation_cache:
+            return self.translation_cache[cache_key]
+        
+        # لو النص عربي أصلاً
+        if any('\u0600' <= c <= '\u06FF' for c in text):
+            return text
+        
+        try:
+            # استخدم Groq للترجمة السريعة
+            if GROQ_API_KEY:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        'https://api.groq.com/openai/v1/chat/completions',
+                        headers={
+                            'Authorization': f'Bearer {GROQ_API_KEY}',
+                            'Content-Type': 'application/json'
+                        },
+                        json={
+                            'model': 'llama-3.3-70b-versatile',
+                            'messages': [
+                                {'role': 'system', 'content': 'أنت مترجم. ترجم النص التالي للعربية فقط بدون أي إضافات أو شرح. لو النص قصير جداً أو اسم، اكتبه كما هو.'},
+                                {'role': 'user', 'content': text}
+                            ],
+                            'max_tokens': 300,
+                            'temperature': 0.3
+                        },
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            translated = data['choices'][0]['message']['content'].strip()
+                            # حفظ في الكاش
+                            self.translation_cache[cache_key] = translated
+                            return translated
+        except Exception as e:
+            logger.warning(f"خطأ في الترجمة: {e}")
+        
+        return text  # رجع النص الأصلي لو فشلت الترجمة
     
     def check_daily_limit(self) -> bool:
         """فحص الحد اليومي"""
@@ -775,7 +823,7 @@ class EmbedBuilder:
         return str(value) if value else None
     
     @staticmethod
-    def item_embed(item: dict) -> discord.Embed:
+    def item_embed(item: dict, translated_desc: str = None) -> discord.Embed:
         """إنشاء Embed لعنصر من اللعبة - الاسم إنجليزي والباقي عربي"""
         # استخراج الاسم - الإنجليزي
         name = None
@@ -790,15 +838,19 @@ class EmbedBuilder:
                     break
         name = name or 'غير معروف'
         
-        # استخراج الوصف - الإنجليزي (لأن ما في عربي)
-        description = None
-        if 'description' in item:
-            desc_val = item['description']
-            if isinstance(desc_val, dict):
-                description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-            else:
-                description = str(desc_val)
-        description = description or 'لا يوجد وصف'
+        # استخدم الوصف المترجم لو موجود
+        if translated_desc:
+            description = translated_desc
+        else:
+            # استخراج الوصف الأصلي
+            description = None
+            if 'description' in item:
+                desc_val = item['description']
+                if isinstance(desc_val, dict):
+                    description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
+                else:
+                    description = str(desc_val)
+            description = description or 'لا يوجد وصف'
         
         embed = discord.Embed(
             title=f"📦 {name}",
@@ -1171,7 +1223,21 @@ async def on_message(message: discord.Message):
         result = results[0]
         item = result['item']
         
-        embed = EmbedBuilder.item_embed(item)
+        # استخراج الوصف وترجمته
+        description = None
+        if 'description' in item:
+            desc_val = item['description']
+            if isinstance(desc_val, dict):
+                description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
+            else:
+                description = str(desc_val)
+        
+        # ترجمة الوصف للعربي
+        translated_desc = None
+        if description and description != 'لا يوجد وصف':
+            translated_desc = await bot.ai_manager.translate_to_arabic(description)
+        
+        embed = EmbedBuilder.item_embed(item, translated_desc)
         reply = await message.reply(embed=embed)
         
         # حفظ السياق
