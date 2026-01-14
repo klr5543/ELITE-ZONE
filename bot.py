@@ -1534,7 +1534,14 @@ async def on_message(message: discord.Message):
             location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
             is_location_question = any(keyword in content_lower for keyword in location_keywords)
             
-            obtain_keywords = ['كيف احصل', 'كيف أجيب', 'كيف اجيب', 'من وين', 'من وين اجيب', 'من وين احصل', 'drop', 'drops', 'loot', 'يطيح', 'يندر', 'يطلع']
+            obtain_keywords = [
+                'كيف احصل', 'كيف أجيب', 'كيف اجيب',
+                'من وين', 'من وين اجيب', 'من وين احصل',
+                'وين القا', 'وين القى', 'وين القاء',
+                'وش الفلارات', 'الفلارات', 'فلارات',
+                'drop', 'drops', 'loot',
+                'يطيح', 'يطيحه', 'يندر', 'يطلع'
+            ]
             is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
             
             if is_crafting_question:
