@@ -302,8 +302,44 @@ class SearchEngine:
                                 'category', 'type', 'location', 'nameKey']
             
             for field in searchable_fields:
-                if field in item and item[field]:
-                    field_value = str(item[field])
+                if field not in item or not item[field]:
+                    continue
+                
+                field_value = item[field]
+                
+                # لو القيمة dict (ترجمات متعددة)
+                if isinstance(field_value, dict):
+                    # نبحث في كل الترجمات
+                    for lang, text in field_value.items():
+                        if not text or not isinstance(text, str):
+                            continue
+                        
+                        text_normalized = self.normalize_text(text)
+                        
+                        # تطابق تام
+                        if query_normalized == text_normalized:
+                            score = 1.0
+                            matched_field = field
+                            break
+                        
+                        # يحتوي على الاستعلام
+                        if query_normalized in text_normalized:
+                            current_score = 0.8 + (len(query_normalized) / len(text_normalized)) * 0.2
+                            if current_score > score:
+                                score = current_score
+                                matched_field = field
+                        
+                        # تشابه جزئي
+                        similarity = self.calculate_similarity(query, text)
+                        if similarity > score:
+                            score = similarity
+                            matched_field = field
+                    
+                    if score == 1.0:
+                        break
+                
+                # لو القيمة string عادي
+                elif isinstance(field_value, str):
                     field_normalized = self.normalize_text(field_value)
                     
                     # تطابق تام
@@ -336,6 +372,26 @@ class SearchEngine:
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:limit]
     
+    def extract_name(self, item: dict) -> str:
+        """استخراج الاسم من العنصر - يدعم الترجمات المتعددة"""
+        # الحقول المحتملة للاسم
+        name_fields = ['name', 'title', 'displayName', 'nameKey']
+        
+        for field in name_fields:
+            if field in item:
+                value = item[field]
+                
+                # لو القيمة dict (ترجمات متعددة)
+                if isinstance(value, dict):
+                    # أولوية: إنجليزي > عربي > أي لغة
+                    return value.get('en') or value.get('ar') or value.get('en-US') or list(value.values())[0]
+                
+                # لو القيمة string عادي
+                elif isinstance(value, str) and value:
+                    return value
+        
+        return "Unknown"
+    
     def find_similar(self, query: str, limit: int = 3) -> list:
         """إيجاد عناصر مشابهة للاقتراحات"""
         results = self.search(query, limit=limit)
@@ -343,8 +399,9 @@ class SearchEngine:
         
         for r in results:
             item = r['item']
-            name = item.get('name') or item.get('title') or item.get('displayName', 'Unknown')
-            suggestions.append(name)
+            name = self.extract_name(item)
+            if name and name != "Unknown" and name not in suggestions:
+                suggestions.append(name)
         
         return suggestions
 
@@ -705,10 +762,45 @@ class EmbedBuilder:
         return embed
     
     @staticmethod
+    def extract_field(item: dict, field: str) -> str:
+        """استخراج قيمة حقل - يدعم الترجمات"""
+        if field not in item:
+            return None
+        
+        value = item[field]
+        
+        # لو dict (ترجمات متعددة)
+        if isinstance(value, dict):
+            return value.get('en') or value.get('ar') or value.get('en-US') or str(list(value.values())[0]) if value else None
+        
+        # لو string أو رقم
+        return str(value) if value else None
+    
+    @staticmethod
     def item_embed(item: dict) -> discord.Embed:
         """إنشاء Embed لعنصر من اللعبة"""
-        name = item.get('name') or item.get('title') or item.get('displayName', 'Unknown')
-        description = item.get('description', 'لا يوجد وصف')
+        # استخراج الاسم
+        name = None
+        for field in ['name', 'title', 'displayName', 'nameKey']:
+            if field in item:
+                value = item[field]
+                if isinstance(value, dict):
+                    name = value.get('en') or value.get('ar') or list(value.values())[0]
+                elif value:
+                    name = str(value)
+                if name:
+                    break
+        name = name or 'Unknown'
+        
+        # استخراج الوصف
+        description = None
+        if 'description' in item:
+            desc_val = item['description']
+            if isinstance(desc_val, dict):
+                description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
+            else:
+                description = str(desc_val)
+        description = description or 'لا يوجد وصف'
         
         embed = discord.Embed(
             title=f"📦 {name}",
@@ -718,35 +810,38 @@ class EmbedBuilder:
         )
         
         # إضافة الحقول
-        if item.get('category'):
-            embed.add_field(name="📁 الفئة", value=item['category'], inline=True)
+        category = EmbedBuilder.extract_field(item, 'category')
+        if category:
+            embed.add_field(name="📁 الفئة", value=category, inline=True)
         
-        if item.get('type'):
-            embed.add_field(name="🏷️ النوع", value=item['type'], inline=True)
+        item_type = EmbedBuilder.extract_field(item, 'type')
+        if item_type:
+            embed.add_field(name="🏷️ النوع", value=item_type, inline=True)
         
-        if item.get('rarity'):
+        rarity = EmbedBuilder.extract_field(item, 'rarity')
+        if rarity:
             rarity_emoji = {
                 'common': '⚪', 'uncommon': '🟢', 'rare': '🔵',
                 'epic': '🟣', 'legendary': '🟡'
-            }.get(item['rarity'].lower(), '⚪')
-            embed.add_field(name="💎 الندرة", value=f"{rarity_emoji} {item['rarity']}", inline=True)
+            }.get(rarity.lower(), '⚪')
+            embed.add_field(name="💎 الندرة", value=f"{rarity_emoji} {rarity}", inline=True)
         
-        if item.get('location'):
-            embed.add_field(name="📍 الموقع", value=item['location'], inline=True)
+        location = EmbedBuilder.extract_field(item, 'location')
+        if location:
+            embed.add_field(name="📍 الموقع", value=location, inline=True)
         
-        if item.get('spawnRate') or item.get('spawn_rate'):
-            rate = item.get('spawnRate') or item.get('spawn_rate')
-            embed.add_field(name="📊 نسبة الظهور", value=f"{rate}%", inline=True)
+        spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
+        if spawn_rate:
+            embed.add_field(name="📊 نسبة الظهور", value=f"{spawn_rate}%", inline=True)
         
-        if item.get('price') or item.get('value'):
-            price = item.get('price') or item.get('value')
+        price = item.get('price') or item.get('value')
+        if price:
             embed.add_field(name="💰 السعر", value=str(price), inline=True)
         
         # صورة العنصر
-        if item.get('image') or item.get('icon') or item.get('imageUrl'):
-            img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
-            if img_url and img_url.startswith('http'):
-                embed.set_thumbnail(url=img_url)
+        img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
+        if img_url and isinstance(img_url, str) and img_url.startswith('http'):
+            embed.set_thumbnail(url=img_url)
         
         embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
         return embed
@@ -973,9 +1068,14 @@ async def search_command(interaction: discord.Interaction, query: str):
     
     for i, result in enumerate(results, 1):
         item = result['item']
-        name = item.get('name') or item.get('title') or item.get('displayName', 'Unknown')
+        name = bot.search_engine.extract_name(item)
         score = int(result['score'] * 100)
-        category = item.get('category') or item.get('type', 'غير محدد')
+        
+        # استخراج الفئة
+        category = item.get('category') or item.get('type')
+        if isinstance(category, dict):
+            category = category.get('en') or list(category.values())[0]
+        category = category or 'غير محدد'
         
         embed.add_field(
             name=f"{i}. {name}",
@@ -1050,7 +1150,7 @@ async def on_message(message: discord.Message):
         reply = await message.reply(embed=embed)
         
         # حفظ السياق
-        name = item.get('name') or item.get('title') or item.get('displayName', '')
+        name = bot.search_engine.extract_name(item)
         bot.context_manager.set_context(message.author.id, name, item)
         
         # إضافة reactions
