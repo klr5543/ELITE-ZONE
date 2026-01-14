@@ -98,11 +98,31 @@ ARABIC_TO_ENGLISH = {
     'متقدمة': 'advanced',
     'خام': 'raw',
     
+    # مستويات وتطوير
+    'لفل': 'level',
+    'ليفل': 'level',
+    'مستوى': 'level',
+    'مستويات': 'levels',
+    'طور': 'upgrade',
+    'تطوير': 'upgrade',
+    'ترقية': 'upgrade',
+    'طورها': 'upgrade',
+    'طورها': 'upgrade',
+    'طوره': 'upgrade',
+    'فل': 'max',
+    'فلها': 'max',
+    'مفلل': 'max',
+    
     # أماكن
     'خريطة': 'map',
     'منطقة': 'zone',
     'مصنع': 'factory',
     'مستودع': 'warehouse',
+    'وين': 'where',
+    'فين': 'where',
+    'اين': 'where',
+    'أين': 'where',
+    'مكان': 'location',
     
     # عناصر
     'درع': 'armor',
@@ -114,7 +134,9 @@ ARABIC_TO_ENGLISH = {
     # أعداء
     'روبوت': 'bot',
     'عدو': 'enemy',
+    'اعداء': 'enemies',
     'زعيم': 'boss',
+    'بوس': 'boss',
     
     # مهارات
     'مهارة': 'skill',
@@ -1248,6 +1270,177 @@ class EmbedBuilder:
         return embed
     
     @staticmethod
+    def bot_embed(bot_data: dict) -> discord.Embed:
+        name_val = bot_data.get("name") or bot_data.get("id") or "Unknown ARC"
+        if isinstance(name_val, dict):
+            name = name_val.get("en") or list(name_val.values())[0]
+        else:
+            name = str(name_val)
+        
+        desc = bot_data.get("description")
+        if isinstance(desc, dict):
+            desc = desc.get("en") or list(desc.values())[0]
+        elif desc:
+            desc = str(desc)
+        else:
+            desc = ""
+        
+        weakness = bot_data.get("weakness")
+        if isinstance(weakness, dict):
+            weakness = weakness.get("en") or list(weakness.values())[0]
+        elif weakness:
+            weakness = str(weakness)
+        
+        embed = discord.Embed(
+            title=f"🤖 ARC: {name}",
+            description=desc[:500] if desc else "لا يوجد وصف",
+            color=COLORS["primary"],
+            timestamp=datetime.now()
+        )
+        
+        bot_type = bot_data.get("type")
+        if isinstance(bot_type, dict):
+            bot_type = bot_type.get("en") or list(bot_type.values())[0]
+        if bot_type:
+            embed.add_field(name="🏷️ النوع", value=str(bot_type), inline=True)
+        
+        threat = bot_data.get("threat")
+        if threat:
+            embed.add_field(name="⚠️ مستوى التهديد", value=str(threat), inline=True)
+        
+        if weakness:
+            embed.add_field(name="🎯 نقطة الضعف", value=weakness[:300], inline=False)
+        
+        maps = bot_data.get("maps")
+        if isinstance(maps, list) and maps:
+            embed.add_field(
+                name="🗺️ يظهر في الخرائط",
+                value=", ".join(maps)[:300],
+                inline=False
+            )
+        
+        destroy_xp = bot_data.get("destroyXp")
+        loot_xp = bot_data.get("lootXp")
+        if destroy_xp or loot_xp:
+            xp_lines = []
+            if destroy_xp:
+                xp_lines.append(f"- تدمير: {destroy_xp}")
+            if loot_xp:
+                xp_lines.append(f"- لوت: {loot_xp}")
+            embed.add_field(
+                name="📊 الخبرة (XP)",
+                value="\n".join(xp_lines),
+                inline=True
+            )
+        
+        drops = bot_data.get("drops")
+        if isinstance(drops, list) and drops:
+            drops_text = "\n".join([f"- {d}" for d in drops])[:500]
+            embed.add_field(
+                name="🎁 اللوت المحتمل",
+                value=drops_text,
+                inline=False
+            )
+        
+        img_url = EmbedBuilder.get_image_url(bot_data)
+        if img_url:
+            embed.set_thumbnail(url=img_url)
+        
+        embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
+        return embed
+    
+    @staticmethod
+    def quest_embed(quest: dict, database_manager=None) -> discord.Embed:
+        name = EmbedBuilder.extract_field(quest, "name") or "Quest"
+        
+        desc = quest.get("description")
+        if isinstance(desc, dict):
+            desc = desc.get("en") or list(desc.values())[0]
+        elif desc:
+            desc = str(desc)
+        else:
+            desc = ""
+        
+        embed = discord.Embed(
+            title=f"📜 {name}",
+            description=desc[:500] if desc else "لا يوجد وصف",
+            color=COLORS["info"],
+            timestamp=datetime.now()
+        )
+        
+        trader = quest.get("trader")
+        if trader:
+            embed.add_field(name="🧑‍💼 التاجر", value=str(trader), inline=True)
+        
+        xp = quest.get("xp")
+        if xp is not None:
+            embed.add_field(name="📊 الخبرة", value=str(xp), inline=True)
+        
+        objectives = quest.get("objectives")
+        if isinstance(objectives, list) and objectives:
+            lines = []
+            for obj in objectives:
+                if isinstance(obj, dict):
+                    text = obj.get("en") or list(obj.values())[0]
+                else:
+                    text = str(obj)
+                if text:
+                    lines.append(f"- {text}")
+            if lines:
+                embed.add_field(
+                    name="🎯 الأهداف",
+                    value="\n".join(lines)[:500],
+                    inline=False
+                )
+        
+        required_items = quest.get("requiredItemIds") or quest.get("requiredItems")
+        if isinstance(required_items, list) and required_items:
+            parts = []
+            for entry in required_items:
+                if not isinstance(entry, dict):
+                    continue
+                item_id = entry.get("itemId")
+                quantity = entry.get("quantity", 1)
+                display_name = None
+                if item_id and database_manager:
+                    display_name = EmbedBuilder._find_resource_name(item_id, database_manager)
+                if not display_name and item_id:
+                    display_name = str(item_id).replace("_", " ").title()
+                if display_name:
+                    parts.append(f"- {quantity}x {display_name}")
+            if parts:
+                embed.add_field(
+                    name="📦 المتطلبات",
+                    value="\n".join(parts)[:500],
+                    inline=False
+                )
+        
+        rewards = quest.get("rewardItemIds") or quest.get("grantedItemIds")
+        if isinstance(rewards, list) and rewards:
+            parts = []
+            for entry in rewards:
+                if not isinstance(entry, dict):
+                    continue
+                item_id = entry.get("itemId")
+                quantity = entry.get("quantity", 1)
+                display_name = None
+                if item_id and database_manager:
+                    display_name = EmbedBuilder._find_resource_name(item_id, database_manager)
+                if not display_name and item_id:
+                    display_name = str(item_id).replace("_", " ").title()
+                if display_name:
+                    parts.append(f"- {quantity}x {display_name}")
+            if parts:
+                embed.add_field(
+                    name="🎁 الجوائز",
+                    value="\n".join(parts)[:500],
+                    inline=False
+                )
+        
+        embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
+        return embed
+    
+    @staticmethod
     def stats_embed(db_stats: dict, ai_stats: dict, uptime: str) -> discord.Embed:
         """إنشاء Embed للإحصائيات"""
         embed = discord.Embed(
@@ -1311,6 +1504,7 @@ class DaleelBot(commands.Bot):
         self.ai_manager = AIManager()
         self.context_manager = ContextManager()
         self.anti_spam = AntiSpam()
+        self.lfg_sessions = {}
         
         # الإحصائيات
         self.start_time = None
@@ -1444,6 +1638,219 @@ async def stats_command(interaction: discord.Interaction):
         bot.get_uptime()
     )
     await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="item", description="جلب معلومات مفصلة عن عنصر من اللعبة")
+@app_commands.describe(name="اسم أو جزء من اسم/ID العنصر")
+async def item_command(interaction: discord.Interaction, name: str):
+    await interaction.response.defer()
+    
+    if not bot.search_engine or not bot.database or not bot.database.loaded:
+        embed = EmbedBuilder.error(
+            "خطأ في النظام",
+            "قاعدة بيانات اللعبة غير جاهزة حالياً."
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    results = bot.search_engine.search(name, limit=1)
+    if not results:
+        embed = EmbedBuilder.warning(
+            "لا نتائج",
+            f"ما لقيت أي عنصر يطابق **{name}**"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    item = results[0]["item"]
+    description = None
+    if "description" in item:
+        desc_val = item["description"]
+        if isinstance(desc_val, dict):
+            description = desc_val.get("en") or desc_val.get("ar") or list(desc_val.values())[0]
+        else:
+            description = str(desc_val)
+    translated_desc = None
+    if description and description != "لا يوجد وصف":
+        translated_desc = await bot.ai_manager.translate_to_arabic(description)
+    
+    embed = EmbedBuilder.item_embed(item, translated_desc, bot.database)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="arc", description="معلومات عن أحد أعداء ARC في اللعبة")
+@app_commands.describe(name="اسم العدو (Tick, Queen, Hornet, ...)")
+async def arc_command(interaction: discord.Interaction, name: str):
+    await interaction.response.defer()
+    
+    if not bot.database or not bot.database.loaded or not bot.database.bots:
+        embed = EmbedBuilder.error(
+            "خطأ في البيانات",
+            "بيانات الأعداء غير متاحة حالياً."
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    candidates = []
+    query = name.lower().strip()
+    for bot_data in bot.database.bots:
+        label = ""
+        if isinstance(bot_data, dict):
+            bot_name = bot_data.get("name")
+            if isinstance(bot_name, dict):
+                label = bot_name.get("en") or list(bot_name.values())[0]
+            elif isinstance(bot_name, str):
+                label = bot_name
+            bot_id = str(bot_data.get("id", ""))
+            label_full = f"{bot_id} {label}".strip()
+            score = bot.search_engine.calculate_similarity(query, label_full)
+            if score > 0.3:
+                candidates.append((score, bot_data))
+    if not candidates:
+        embed = EmbedBuilder.warning(
+            "لا نتائج",
+            f"ما لقيت أي عدو يطابق **{name}**"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    best_bot = candidates[0][1]
+    embed = EmbedBuilder.bot_embed(best_bot)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="quest", description="عرض تفاصيل مهمة من مهام اللعبة")
+@app_commands.describe(name="اسم أو جزء من اسم المهمة")
+async def quest_command(interaction: discord.Interaction, name: str):
+    await interaction.response.defer()
+    
+    if not bot.database or not bot.database.loaded or not bot.database.quests:
+        embed = EmbedBuilder.error(
+            "خطأ في البيانات",
+            "بيانات المهام غير متاحة حالياً."
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    candidates = []
+    query = name.lower().strip()
+    for quest in bot.database.quests:
+        if not isinstance(quest, dict):
+            continue
+        quest_name = quest.get("name")
+        label = ""
+        if isinstance(quest_name, dict):
+            label = quest_name.get("en") or list(quest_name.values())[0]
+        elif isinstance(quest_name, str):
+            label = quest_name
+        quest_id = str(quest.get("id", ""))
+        label_full = f"{quest_id} {label}".strip()
+        score = bot.search_engine.calculate_similarity(query, label_full)
+        if score > 0.3:
+            candidates.append((score, quest))
+    if not candidates:
+        embed = EmbedBuilder.warning(
+            "لا نتائج",
+            f"ما لقيت أي مهمة تطابق **{name}**"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    best_quest = candidates[0][1]
+    embed = EmbedBuilder.quest_embed(best_quest, bot.database)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="map", description="معلومات عن خريطة من خرائط ARC Raiders")
+@app_commands.describe(name="اسم الخريطة")
+async def map_command(interaction: discord.Interaction, name: str):
+    await interaction.response.defer()
+    
+    if not bot.database or not bot.database.loaded or not bot.database.maps:
+        embed = EmbedBuilder.error(
+            "خطأ في البيانات",
+            "بيانات الخرائط غير متاحة حالياً."
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    candidates = []
+    query = name.lower().strip()
+    for m in bot.database.maps:
+        if not isinstance(m, dict):
+            continue
+        map_name = m.get("name") or m.get("displayName") or m.get("id")
+        label = ""
+        if isinstance(map_name, dict):
+            label = map_name.get("en") or list(map_name.values())[0]
+        elif isinstance(map_name, str):
+            label = map_name
+        map_id = str(m.get("id", ""))
+        label_full = f"{map_id} {label}".strip()
+        score = bot.search_engine.calculate_similarity(query, label_full)
+        if score > 0.3:
+            candidates.append((score, m))
+    if not candidates:
+        embed = EmbedBuilder.warning(
+            "لا نتائج",
+            f"ما لقيت أي خريطة تطابق **{name}**"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    best_map = candidates[0][1]
+    map_name = ""
+    name_val = best_map.get("name") or best_map.get("displayName") or best_map.get("id")
+    if isinstance(name_val, dict):
+        map_name = name_val.get("en") or list(name_val.values())[0]
+    elif isinstance(name_val, str):
+        map_name = name_val
+    else:
+        map_name = str(name_val)
+    embed = EmbedBuilder.map_embed(map_name, best_map)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="lfg", description="إنشاء إعلان LFG لتكوين فريق لعب")
+@app_commands.describe(
+    mode="نوع اللعب (مثال: PvE, PvP, Chill)",
+    slots="عدد اللاعبين المطلوبين (غيرك)",
+    note="وصف قصير للجلسة أو المتطلبات"
+)
+async def lfg_command(
+    interaction: discord.Interaction,
+    mode: str,
+    slots: app_commands.Range[int, 1, 3],
+    note: str = ""
+):
+    await interaction.response.defer(ephemeral=True)
+    
+    channel = interaction.channel
+    host = interaction.user
+    
+    title_mode = mode.strip() or "ARC Raiders"
+    embed = discord.Embed(
+        title=f"🎮 LFG - {title_mode}",
+        color=COLORS["primary"],
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="المضيف", value=host.mention, inline=True)
+    embed.add_field(name="اللاعبون المطلوبون", value=str(slots), inline=True)
+    if note:
+        embed.add_field(name="الوصف", value=note[:200], inline=False)
+    embed.add_field(name="المنضمّون", value=f"- {host.mention}", inline=False)
+    embed.set_footer(text="اضغط ✅ للانضمام • ❌ لإلغاء الإعلان (للمضيف)")
+    
+    msg = await channel.send(embed=embed)
+    bot.lfg_sessions[msg.id] = {
+        "owner_id": host.id,
+        "max_slots": slots + 1,
+        "members": [host.id],
+        "mode": title_mode,
+        "note": note[:200]
+    }
+    await msg.add_reaction("✅")
+    await msg.add_reaction("❌")
+    
+    await interaction.followup.send("تم إنشاء إعلان LFG في هذه القناة.", ephemeral=True)
 
 @bot.tree.command(name="search", description="بحث في قاعدة البيانات")
 @app_commands.describe(query="كلمة البحث")
@@ -1759,10 +2166,42 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
     """سؤال الـ AI والرد"""
     thinking_msg = await message.reply("🔍 أبحث لك...")
     
-    context = ""
+    context_parts = []
     user_context = bot.context_manager.get_context(message.author.id)
     if user_context:
-        context = f"المستخدم كان يسأل عن: {user_context['item']}"
+        context_parts.append(f"المستخدم كان يسأل سابقاً عن: {user_context['item']}")
+    
+    knowledge_context = ""
+    if bot.search_engine and bot.database and bot.database.loaded:
+        try:
+            search_results = bot.search_engine.search(question, limit=3)
+            snippets = []
+            for result in search_results:
+                item = result.get('item')
+                if not isinstance(item, dict):
+                    continue
+                name = bot.search_engine.extract_name(item)
+                if not name or name == "غير معروف":
+                    continue
+                desc_val = item.get('description')
+                if isinstance(desc_val, dict):
+                    desc = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
+                elif desc_val:
+                    desc = str(desc_val)
+                else:
+                    desc = ""
+                if desc:
+                    desc = desc.replace('\n', ' ')[:200]
+                    snippets.append(f"- {name}: {desc}")
+            if snippets:
+                knowledge_context = "مقتطفات قصيرة من بيانات ARC Raiders:\n" + "\n".join(snippets)
+        except Exception as e:
+            logger.warning(f"خطأ في بناء سياق بيانات اللعبة للـ AI: {e}")
+    
+    if knowledge_context:
+        context_parts.append(knowledge_context)
+    
+    context = "\n".join(context_parts) if context_parts else ""
     
     ai_result = await bot.ai_manager.ask_ai(question, context)
     
@@ -1791,10 +2230,28 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
     if user.bot:
         return
     
-    if reaction.message.author != bot.user:
+    emoji = str(reaction.emoji)
+    
+    if reaction.message.id in bot.lfg_sessions:
+        session = bot.lfg_sessions[reaction.message.id]
+        if emoji == '✅':
+            if user.id not in session['members'] and len(session['members']) < session['max_slots']:
+                session['members'].append(user.id)
+                members_text = "\n".join([f"- <@{uid}>" for uid in session['members']])
+                embed = reaction.message.embeds[0] if reaction.message.embeds else discord.Embed(color=COLORS["primary"])
+                for field in embed.fields:
+                    if field.name == "المنضمّون":
+                        embed.remove_field(embed.fields.index(field))
+                        break
+                embed.add_field(name="المنضمّون", value=members_text, inline=False)
+                await reaction.message.edit(embed=embed)
+        elif emoji == '❌' and user.id == session['owner_id']:
+            del bot.lfg_sessions[reaction.message.id]
+            await reaction.message.delete()
         return
     
-    emoji = str(reaction.emoji)
+    if reaction.message.author != bot.user:
+        return
     
     # تسجيل في اللوق
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
