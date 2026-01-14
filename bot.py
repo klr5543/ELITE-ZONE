@@ -1476,12 +1476,15 @@ async def on_message(message: discord.Message):
     # حقن السياق
     question = bot.context_manager.inject_context(message.author.id, content)
     
+    crafting_keywords = ['ادوات', 'أدوات', 'تصنع', 'تسوي', 'تصنيع', 'recipe', 'craft', 'مكونات', 'مخطط']
+    is_crafting_question = any(keyword in content_lower for keyword in crafting_keywords)
+    
     # البحث في قاعدة البيانات
     ai_configured = is_ai_configured()
     use_ai = should_use_ai(question) and ai_configured
     results = bot.search_engine.search(question, limit=1)
     
-    if results and results[0]['score'] > 0.6:
+    if results and (results[0]['score'] > 0.6 or (is_crafting_question and results[0]['score'] > 0.3)):
         result = results[0]
         item = result['item']
         
@@ -1490,7 +1493,7 @@ async def on_message(message: discord.Message):
         english_words = re.findall(r'[a-zA-Z]+', content)
         
         skip_result = False
-        if english_words:
+        if not is_crafting_question and english_words:
             main_word = max(english_words, key=len).lower()
             if len(main_word) > 3 and main_word not in item_name:
                 skip_result = True
@@ -1512,9 +1515,6 @@ async def on_message(message: discord.Message):
             
             location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
             is_location_question = any(keyword in content_lower for keyword in location_keywords)
-
-            crafting_keywords = ['ادوات', 'أدوات', 'تصنع', 'تسوي', 'تصنيع', 'recipe', 'craft', 'مكونات', 'مخطط']
-            is_crafting_question = any(keyword in content_lower for keyword in crafting_keywords)
             if is_crafting_question:
                 recipe = item.get('recipe')
                 if isinstance(recipe, dict) and recipe:
