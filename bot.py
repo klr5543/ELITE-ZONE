@@ -619,8 +619,14 @@ class AIManager:
             self.last_reset = today
         return self.daily_usage < self.daily_limit
     
-    async def ask_ai(self, question: str, context: str = "") -> dict:
-        """سؤال الـ AI مع نظام الاحتياطي"""
+    async def ask_ai(self, question: str, context: str = "", mode: str = "default") -> dict:
+        """سؤال الـ AI مع نظام الاحتياطي
+        
+        mode:
+          - default: إجابة عامة عن اللعبة
+          - build: اقتراح بِلْد / لودآوت
+          - explain: شرح تفصيلي / تعليم لاعب جديد
+        """
         
         if not self.check_daily_limit():
             return {
@@ -629,13 +635,35 @@ class AIManager:
                 'provider': None
             }
         
-        system_prompt = f"""أنت "دليل" - بوت مساعد لمجتمع ARC Raiders العربي.
-        
-قواعد الرد:
-1. رد بالعربي دائماً
-2. كن مختصراً ومفيداً
-3. لو ما تعرف الجواب، قل ذلك بصراحة
-4. ركز على معلومات اللعبة فقط
+        base_prompt = """أنت "دليل" - بوت مساعد لمجتمع ARC Raiders العربي.
+أنت خبير في لعبة ARC Raiders وتفاصيلها (الأسلحة، العتاد، المهام، المهارات، الخرائط، أنظمة اللعب).
+
+قواعد عامة:
+1. رد بالعربية الفصحى المبسطة أو لهجة سعودية خفيفة بدون مبالغة.
+2. كن مختصراً ومباشراً قدر الإمكان، لا تدوّن مقالات.
+3. لو ما تعرف الجواب منطقياً، قل ذلك بصراحة وبدون اختراع معلومات.
+4. ركّز دائماً على معلومات اللعبة، وتجنب أي مواضيع خارجها.
+"""
+
+        # تخصيص الرد حسب الـ mode
+        if mode == "build":
+            mode_prompt = """
+أنت الآن متخصص في اقتراح Builds و Loadouts:
+- اقترح سلاحاً / مهارة / Augments / Gear يناسب أسلوب اللعب المطلوب.
+- أعطِ السبب لكل اختيار بشكل سطر أو سطرين فقط.
+- لا تعطِ أكثر من 3–4 اقتراحات رئيسية حتى لا تُربك اللاعب.
+"""
+        elif mode == "explain":
+            mode_prompt = """
+أنت الآن مدرب يشرح للّاعبين العرب:
+- اشرح الفكرة أو الميكانيك بهدوء وبخطوات.
+- استخدم قوائم نقطية إن احتجت.
+- لا تدخل في تفاصيل غير مهمة لو كان السؤال بسيطاً.
+"""
+        else:
+            mode_prompt = ""
+
+        system_prompt = f"""{base_prompt}{mode_prompt}
 
 {f'السياق: {context}' if context else ''}"""
         
@@ -1412,6 +1440,86 @@ async def search_command(interaction: discord.Interaction, query: str):
         )
     
     embed.set_footer(text=f"🤖 {BOT_NAME}")
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="build", description="اقتراح بِلْد / لودآوت حسب أسلوب لعبك")
+@app_commands.describe(
+    weapon="اسم السلاح (اختياري)",
+    role="أسلوب اللعب (مثال: solo, team, support, aggressive, cautious)"
+)
+async def build_command(
+    interaction: discord.Interaction,
+    weapon: str = "",
+    role: str = ""
+):
+    """أمر اقتراح بِلْد"""
+    await interaction.response.defer()
+
+    # نجرب نربط مع بيانات اللعبة لو أعطى سلاح
+    context_parts = []
+    if weapon and bot.search_engine:
+        results = bot.search_engine.search(weapon, limit=1)
+        if results:
+            item = results[0]["item"]
+            name = bot.search_engine.extract_name(item)
+            context_parts.append(f"السلاح: {name}")
+
+    if role:
+        context_parts.append(f"أسلوب اللعب المطلوب: {role}")
+
+    context = " | ".join(context_parts) if context_parts else ""
+
+    question = f"اقترح لي بِلْد مناسب في ARC Raiders {f'مع سلاح {weapon}' if weapon else ''} {f'لأسلوب {role}' if role else ''}."
+
+    ai_result = await bot.ai_manager.ask_ai(question, context=context, mode="build")
+
+    if ai_result["success"]:
+        embed = EmbedBuilder.success(
+            "اقتراح بِلْد",
+            ai_result["answer"]
+        )
+        embed.set_footer(text=f"via {ai_result['provider']} • 🤖 {BOT_NAME}")
+    else:
+        embed = EmbedBuilder.error(
+            "عذراً",
+            "ما قدرت أجهز بِلْد حالياً.\n\n💡 جرب تغيّر طريقة السؤال أو جرّب لاحقاً."
+        )
+
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="explain", description="خل دليل يشرح لك شيء عن اللعبة")
+@app_commands.describe(topic="اكتب الشيء اللي تبي شرحه (ميكانيك، مهمة، نظام، سلاح، الخ)")
+async def explain_command(interaction: discord.Interaction, topic: str):
+    """أمر شرح ميكانيك / نظام"""
+    await interaction.response.defer()
+
+    context = ""
+    # نحاول نربط بالبيانات لو يتعلق بسلاح / مهمة / عدو
+    if bot.search_engine:
+        results = bot.search_engine.search(topic, limit=1)
+        if results:
+            item = results[0]["item"]
+            name = bot.search_engine.extract_name(item)
+            context = f"الموضوع يتعلق بالعنصر: {name}"
+
+    question = f"اشرح للاعب عربي جديد في ARC Raiders: {topic}"
+
+    ai_result = await bot.ai_manager.ask_ai(question, context=context, mode="explain")
+
+    if ai_result["success"]:
+        embed = EmbedBuilder.success(
+            "شرح من دليل",
+            ai_result["answer"]
+        )
+        embed.set_footer(text=f"via {ai_result['provider']} • 🤖 {BOT_NAME}")
+    else:
+        embed = EmbedBuilder.error(
+            "عذراً",
+            "ما قدرت أشرح هذا الشيء حالياً.\n\n💡 جرّب تسأل بطريقة أبسط."
+        )
+
     await interaction.followup.send(embed=embed)
 
 # ═══════════════════════════════════════════════════════════════
