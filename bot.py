@@ -2210,29 +2210,46 @@ async def on_message(message: discord.Message):
             
             embed = EmbedBuilder.item_embed(item, translated_desc, bot.database)
             
-            # كشف نوع السؤال (موقع / طريقة الحصول لأول مرة)
             location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'where', 'location', 'find']
             obtain_keywords = ['احصل', 'أحصل', 'الحصول', 'اطلع', 'أطلع', 'drop', 'get', 'farm', 'اول مره', 'أول مره', 'اول مرة', 'أول مرة']
+            upgrade_keywords = ['تطوير', 'ترقية', 'طور', 'اطور', 'أطور', 'قطع تطوير', 'upgrade']
+            strength_keywords = ['قوته', 'قوي', 'قوية', 'قوتها', 'يستاهل', 'يسوى', 'افضل', 'أقوى', 'strong', 'meta']
             is_location_question = any(keyword in content_lower for keyword in location_keywords)
             is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
+            is_upgrade_question = any(keyword in content_lower for keyword in upgrade_keywords)
+            is_strength_question = any(keyword in content_lower for keyword in strength_keywords)
             
             # إرسال الرد الأول (معلومات العنصر)
             reply = await message.reply(embed=embed)
             
-            # لو سؤال عن موقع، نرسل صورة الخريطة
             if is_location_question:
                 location = item.get('location') or item.get('spawn_location') or item.get('map')
                 if location:
                     if isinstance(location, dict):
                         location = location.get('en') or list(location.values())[0]
                     
-                    # إرسال صورة الخريطة
                     map_embed = EmbedBuilder.map_embed(str(location), item)
                     await message.channel.send(embed=map_embed)
             
-            # لو السؤال عن طريقة الحصول/الفارم لأول مرة، نستخدم AI مع سياق خاص
-            if is_obtain_question:
-                followup_question = f"كيف أقدر أحصل على {bot.search_engine.extract_name(item)} لأول مرة في ARC Raiders؟ وضح بالترتيب أفضل الطرق الثابتة (مهام، دروب، تصنيع، Hideout) إذا كانت موجودة."
+            if is_upgrade_question:
+                followup_question = (
+                    f"اللاعب يسأل عن متطلبات أو قطع تطوير العنصر {bot.search_engine.extract_name(item)} في ARC Raiders. "
+                    f"السؤال الأصلي: \"{content}\". بالاعتماد على بيانات اللعبة في السياق، اشرح بالعربية وبشكل واضح ما هي موارد التطوير المطلوبة "
+                    f"وأي ملاحظات مهمة عن الانتقال بين المستويات إن وجدت، بدون اختراع أرقام غير موجودة."
+                )
+                await ask_ai_and_reply(message, followup_question)
+            elif is_obtain_question:
+                followup_question = (
+                    f"كيف يمكن الحصول على العنصر {bot.search_engine.extract_name(item)} لأول مرة في ARC Raiders؟ "
+                    f"السؤال الأصلي: \"{content}\". وضح أفضل الطرق الثابتة مثل المهام، الدروب من الأعداء، التصنيع، أو وحدات الـ Hideout إن كانت موجودة في البيانات."
+                )
+                await ask_ai_and_reply(message, followup_question)
+            elif is_strength_question:
+                followup_question = (
+                    f"اللاعب يسأل عن قوة العنصر {bot.search_engine.extract_name(item)} في ARC Raiders. "
+                    f"السؤال الأصلي: \"{content}\". قيم قوة هذا العنصر بشكل عام بالاعتماد على وصفه ونوعه وندرته في السياق، "
+                    f"واشرح متى يكون مفيداً ومتى قد لا يكون خياراً جيداً، بدون اختراع أرقام تفصيلية غير موجودة."
+                )
                 await ask_ai_and_reply(message, followup_question)
             
             # حفظ السياق
@@ -2298,16 +2315,34 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
                 else:
                     desc = ""
                 if desc:
-                    desc = desc.replace('\n', ' ')[:180]
+                    desc = desc.replace('\n', ' ')[:120]
                 item_id = str(item.get("id", ""))
                 extra_parts = []
+                upgrade_cost = item.get("upgradeCost")
+                if isinstance(upgrade_cost, dict) and upgrade_cost:
+                    cost_parts = []
+                    for res_id, amount in upgrade_cost.items():
+                        res_name = EmbedBuilder._find_resource_name(res_id, bot.database)
+                        label = res_name or str(res_id).replace("_", " ")
+                        cost_parts.append(f"{amount}x {label}")
+                    if cost_parts:
+                        extra_parts.append("متطلبات تطوير: " + ", ".join(cost_parts))
+                recycles_into = item.get("recyclesInto") or item.get("salvagesInto")
+                if isinstance(recycles_into, dict) and recycles_into:
+                    recycle_parts = []
+                    for res_id, amount in recycles_into.items():
+                        res_name = EmbedBuilder._find_resource_name(res_id, bot.database)
+                        label = res_name or str(res_id).replace("_", " ")
+                        recycle_parts.append(f"{amount}x {label}")
+                    if recycle_parts:
+                        extra_parts.append("يعاد تدويره إلى: " + ", ".join(recycle_parts))
                 quests = bot.search_engine.find_quests_rewarding_item(item_id)
                 if quests:
                     extra_parts.append(f"يُكافِئ عليه في {len(quests)} مهمة على الأقل.")
                 hideout_sources = bot.search_engine.find_hideout_sources_for_item(item_id)
                 if hideout_sources:
                     extra_parts.append("مرتبط بوحدات الـ Hideout أو التصنيع/التفكيك.")
-                extra = (" " + " ".join(extra_parts)) if extra_parts else ""
+                extra = (" " + " | ".join(extra_parts)) if extra_parts else ""
                 snippets.append(f"- {name} ({item_id}): {desc}{extra}")
             if snippets:
                 knowledge_context = "مقتطفات قصيرة من بيانات ARC Raiders (عناصر + مهام + Hideout):\n" + "\n".join(snippets)
