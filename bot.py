@@ -115,6 +115,7 @@ ARABIC_TO_ENGLISH = {
     
     # أماكن
     'خريطة': 'map',
+    'ماب': 'map',
     'منطقة': 'zone',
     'مصنع': 'factory',
     'مستودع': 'warehouse',
@@ -147,7 +148,15 @@ ARABIC_TO_ENGLISH = {
     'تاجر': 'trader',
     'متجر': 'shop',
     'شراء': 'buy',
-    'بيع': 'sell'
+    'بيع': 'sell',
+    'دروب': 'drop',
+    'ينزل': 'drop',
+    'نزل': 'drop',
+    'يطيح': 'drop',
+    'يطلع': 'drop',
+    'سقوط': 'drop',
+    'سبون': 'spawn',
+    'سباون': 'spawn'
 }
 
 # روابط الصور من GitHub
@@ -790,11 +799,12 @@ class AIManager:
 
 قواعد عامة:
 1. رد بالعربية الفصحى المبسطة أو لهجة سعودية خفيفة بدون مبالغة.
-2. كن مختصراً ومباشراً قدر الإمكان، لا تدوّن مقالات.
-3. لو ما تعرف الجواب منطقياً، قل ذلك بصراحة وبدون اختراع معلومات.
-4. ركّز دائماً على معلومات اللعبة، وتجنب أي مواضيع خارجها.
-5. اذكر أسماء الأسلحة والموارد والقطع بالإنجليزية كما هي في اللعبة.
-6. لا تعِد نسخ نفس الجداول التي في بطاقة البوت؛ ركّز على الشرح (متى وأين ولماذا).
+2. ابدأ بالجواب مباشرة في أول سطر بدون مقدمات أو تحيات.
+3. كن مختصراً ومباشراً قدر الإمكان، لا تكتب مقالات ولا شرحاً زائداً.
+4. لو ما تعرف الجواب منطقياً من السياق، قل ذلك بصراحة وبدون اختراع معلومات.
+5. ركّز دائماً على معلومات اللعبة فقط، وتجنب أي مواضيع خارجها.
+6. اذكر أسماء الأسلحة والموارد والقطع بالإنجليزية كما هي في اللعبة.
+7. لا تعِد نسخ نفس الجداول التي في بطاقة البوت؛ ركّز على متى وأين ولماذا وكيف يستخدم اللاعب الشيء.
 """
 
         # تخصيص الرد حسب الـ mode
@@ -2108,6 +2118,7 @@ async def on_message(message: discord.Message):
     # تنظيف الرسالة
     content = message.content.strip()
     content_lower = content.lower()
+    wants_card = 'دليل' in content_lower or 'guide' in content_lower
     
     # كلمات نتجاهلها (اسم البوت، تحيات قصيرة، إلخ)
     ignore_words = [
@@ -2169,17 +2180,6 @@ async def on_message(message: discord.Message):
         await message.reply(embed=embed)
         return
     
-    resource_keywords = [
-        'mechanical_components',
-        'heavy_gun_parts',
-        'simple_gun_parts',
-        'advanced_mechanical_components',
-        'advanced_simple_gun_parts'
-    ]
-    if any(keyword in content_lower for keyword in resource_keywords):
-        await ask_ai_and_reply(message, question)
-        return
-    
     # البحث في قاعدة البيانات
     results = bot.search_engine.search(question, limit=1)
     
@@ -2232,96 +2232,88 @@ async def on_message(message: discord.Message):
             
             embed = EmbedBuilder.item_embed(item, translated_desc, bot.database)
             
-            location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'where', 'location', 'find']
-            obtain_keywords = ['احصل', 'أحصل', 'الحصول', 'اطلع', 'أطلع', 'drop', 'get', 'farm', 'اول مره', 'أول مره', 'اول مرة', 'أول مرة']
-            upgrade_keywords = ['تطوير', 'ترقية', 'طور', 'اطور', 'أطور', 'قطع تطوير', 'upgrade']
-            strength_keywords = ['قوته', 'قوي', 'قوية', 'قوتها', 'يستاهل', 'يسوى', 'افضل', 'أقوى', 'strong', 'meta']
-            dismantle_keywords = ['فك', 'فكك', 'تفكيك', 'لو فككته', 'كسرت', 'كسر', 'recycle', 'salvage', 'dismantle']
+            location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'spawn', 'سبون', 'سباون', 'where', 'location', 'find', 'يطلع', 'تطلع']
+            obtain_keywords = ['احصل', 'أحصل', 'الحصول', 'اطلع', 'أطلع', 'دروب', 'drop', 'get', 'farm', 'اول مره', 'أول مره', 'اول مرة', 'أول مرة', 'ينزل', 'نزل', 'يطيح', 'يسقط', 'يطلع من']
+            upgrade_keywords = ['تطوير', 'ترقية', 'طور', 'اطور', 'أطور', 'قطع تطوير', 'upgrade', 'لفل', 'ليفل', 'رفع', 'يرفع']
+            strength_keywords = ['قوته', 'قوي', 'قوية', 'قوتها', 'يستاهل', 'يسوى', 'افضل', 'أقوى', 'strong', 'meta', 'ينفع', 'يصلح', 'حلو', 'سيء']
+            dismantle_keywords = ['فك', 'فكك', 'تفكيك', 'لو فككته', 'كسرت', 'كسر', 'recycle', 'salvage', 'dismantle', 'افك', 'أفك', 'افكه', 'اكسر', 'أكسر', 'سلفج']
             is_location_question = any(keyword in content_lower for keyword in location_keywords)
             is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
             is_upgrade_question = any(keyword in content_lower for keyword in upgrade_keywords)
             is_strength_question = any(keyword in content_lower for keyword in strength_keywords)
             is_dismantle_question = any(keyword in content_lower for keyword in dismantle_keywords)
             
-            reply = await message.reply(embed=embed)
+            needs_ai = is_obtain_question or is_upgrade_question or is_strength_question or is_dismantle_question
             
-            resource_ids = set()
-            recipe = item.get('recipe')
-            upgrade_cost = item.get('upgradeCost')
-            recycles_into = item.get('recyclesInto')
-            salvages_into = item.get('salvagesInto')
-            if isinstance(recipe, dict):
-                resource_ids.update(recipe.keys())
-            if isinstance(upgrade_cost, dict):
-                resource_ids.update(upgrade_cost.keys())
-            if isinstance(recycles_into, dict):
-                resource_ids.update(recycles_into.keys())
-            if isinstance(salvages_into, dict):
-                resource_ids.update(salvages_into.keys())
+            if not needs_ai:
+                reply = await message.reply(embed=embed)
+                
+                if is_location_question:
+                    location = item.get('location') or item.get('spawn_location') or item.get('map')
+                    if location:
+                        if isinstance(location, dict):
+                            location = location.get('en') or list(location.values())[0]
+                        
+                        map_embed = EmbedBuilder.map_embed(str(location), item)
+                        await message.channel.send(embed=map_embed)
+                
+                name = bot.search_engine.extract_name(item)
+                bot.context_manager.set_context(message.author.id, name, item)
+                
+                await reply.add_reaction('✅')
+                await reply.add_reaction('❌')
+                
+                bot.questions_answered += 1
+                return
             
-            if resource_ids and bot.database and bot.database.items:
-                sent = 0
-                for res_id in resource_ids:
-                    res_item = None
-                    for base_item in bot.database.items:
-                        if isinstance(base_item, dict) and base_item.get('id') == res_id:
-                            res_item = base_item
-                            break
-                    if not res_item:
-                        continue
-                    res_embed = EmbedBuilder.resource_preview_embed(res_item)
-                    await message.channel.send(embed=res_embed)
-                    sent += 1
-                    if sent >= 4:
-                        break
-            
-            if is_location_question:
-                location = item.get('location') or item.get('spawn_location') or item.get('map')
-                if location:
-                    if isinstance(location, dict):
-                        location = location.get('en') or list(location.values())[0]
-                    
-                    map_embed = EmbedBuilder.map_embed(str(location), item)
-                    await message.channel.send(embed=map_embed)
-            
+            followup_question = None
             if is_dismantle_question:
                 followup_question = (
-                    f"اللاعب يسأل ماذا يحصل لو فكك أو أعاد تدوير العنصر {bot.search_engine.extract_name(item)} في ARC Raiders. "
-                    f"السؤال الأصلي: \"{content}\". بالاعتماد على بيانات اللعبة في السياق، اشرح بالعربية ما هي الموارد التي يحصل عليها عند التفكيك "
-                    f"(recyclesInto / salvagesInto) وهل من المنطقي تفكيكه أم الاحتفاظ به."
+                    f"جاوب كلاعب خبير في ARC Raiders.\n"
+                    f"- استخدم بيانات التفكيك الموجودة في السياق فقط (recyclesInto / salvagesInto) للعنصر {bot.search_engine.extract_name(item)}.\n"
+                    f"- اذكر بالضبط ما يرجع من موارد عند التفكيك بنقاط قصيرة.\n"
+                    f"- لو البيانات ناقصة أو غير موجودة، قل بوضوح إن الداتا ما توضح النتيجة ولا تخترع.\n"
+                    f"السؤال الأصلي من اللاعب: \"{content}\"."
                 )
-                await ask_ai_and_reply(message, followup_question)
             elif is_upgrade_question:
                 followup_question = (
-                    f"اللاعب يسأل عن متطلبات أو قطع تطوير العنصر {bot.search_engine.extract_name(item)} في ARC Raiders. "
-                    f"السؤال الأصلي: \"{content}\". بالاعتماد على بيانات اللعبة في السياق، اشرح بالعربية وبشكل واضح ما هي موارد التطوير المطلوبة "
-                    f"وأي ملاحظات مهمة عن الانتقال بين المستويات إن وجدت، بدون اختراع أرقام غير موجودة."
+                    f"جاوب كلاعب خبير في ARC Raiders.\n"
+                    f"- استخدم بيانات التطوير الموجودة في السياق فقط (upgradeCost) للعنصر {bot.search_engine.extract_name(item)}.\n"
+                    f"- اذكر قطع التطوير المطلوبة بنقاط واضحة، مع أسماء الموارد بالإنجليزية كما هي.\n"
+                    f"- لو ما في بيانات تطوير في السياق، قل إن العنصر ما له بيانات تطوير معروفة بدلاً من الاختراع.\n"
+                    f"السؤال الأصلي من اللاعب: \"{content}\"."
                 )
-                await ask_ai_and_reply(message, followup_question)
             elif is_obtain_question:
                 followup_question = (
-                    f"كيف يمكن الحصول على العنصر {bot.search_engine.extract_name(item)} لأول مرة في ARC Raiders؟ "
-                    f"السؤال الأصلي: \"{content}\". وضح أفضل الطرق الثابتة مثل المهام، الدروب من الأعداء، التصنيع، أو وحدات الـ Hideout إن كانت موجودة في البيانات."
+                    f"جاوب كلاعب خبير في ARC Raiders.\n"
+                    f"- اعتمد أولاً على أي مهام أو Hideout أو Drops مذكورة في السياق حول العنصر {bot.search_engine.extract_name(item)}.\n"
+                    f"- اشرح أفضل 2–4 طرق أكيدة للحصول عليه لأول مرة بنقاط قصيرة.\n"
+                    f"- لو الداتا ما تعطي طريقة واضحة، قل إن الطريقة الدقيقة غير موثقة في البيانات، ولا تخترع.\n"
+                    f"السؤال الأصلي من اللاعب: \"{content}\"."
                 )
-                await ask_ai_and_reply(message, followup_question)
             elif is_strength_question:
                 followup_question = (
-                    f"اللاعب يسأل عن قوة العنصر {bot.search_engine.extract_name(item)} في ARC Raiders. "
-                    f"السؤال الأصلي: \"{content}\". قيم قوة هذا العنصر بشكل عام بالاعتماد على وصفه ونوعه وندرته في السياق، "
-                    f"واشرح متى يكون مفيداً ومتى قد لا يكون خياراً جيداً، بدون اختراع أرقام تفصيلية غير موجودة."
+                    f"جاوب كلاعب خبير في ARC Raiders.\n"
+                    f"- قيّم قوة العنصر {bot.search_engine.extract_name(item)} بالاعتماد على وصفه ونوعه وندرته في السياق.\n"
+                    f"- اذكر في 3 نقاط: مميزاته، عيوبه، ومتى ينصح باستخدامه.\n"
+                    f"- لا تخترع أرقام ضرر أو نسب دقيقة غير موجودة في البيانات.\n"
+                    f"السؤال الأصلي من اللاعب: \"{content}\"."
                 )
-                await ask_ai_and_reply(message, followup_question)
             
-            # حفظ السياق
-            name = bot.search_engine.extract_name(item)
-            bot.context_manager.set_context(message.author.id, name, item)
-            
-            # إضافة reactions بسيطة
-            await reply.add_reaction('✅')  # إجابة صحيحة
-            await reply.add_reaction('❌')  # إجابة خاطئة
-            
-            bot.questions_answered += 1
-            return
+            if followup_question:
+                if is_dismantle_question:
+                    await ask_ai_and_reply(message, followup_question)
+                else:
+                    if wants_card:
+                        await ask_ai_and_reply(message, followup_question, base_embed=embed)
+                    else:
+                        await ask_ai_and_reply(message, followup_question)
+                
+                name = bot.search_engine.extract_name(item)
+                bot.context_manager.set_context(message.author.id, name, item)
+                
+                bot.questions_answered += 1
+                return
     
     # لو skip_result أو النتيجة ضعيفة
     if results and results[0]['score'] > 0.3:
@@ -2346,8 +2338,8 @@ async def on_message(message: discord.Message):
         await ask_ai_and_reply(message, question)
 
 
-async def ask_ai_and_reply(message: discord.Message, question: str):
-    """سؤال الـ AI والرد"""
+async def ask_ai_and_reply(message: discord.Message, question: str, base_embed: discord.Embed | None = None):
+    """سؤال الـ AI والرد - يمكن إرفاق كرت عنصر في نفس الرد"""
     thinking_msg = await message.reply("🔍 أبحث لك...")
     
     context_parts = []
@@ -2419,18 +2411,22 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
     await thinking_msg.delete()
     
     if ai_result['success']:
-        embed = EmbedBuilder.success(
+        ai_embed = EmbedBuilder.success(
             "جواب من AI",
             ai_result['answer']
         )
-        embed.set_footer(text=f"via {ai_result['provider']} • 🤖 {BOT_NAME}")
+        ai_embed.set_footer(text=f"via {ai_result['provider']} • 🤖 {BOT_NAME}")
     else:
-        embed = EmbedBuilder.error(
+        ai_embed = EmbedBuilder.error(
             "عذراً",
             "ما قدرت ألقى جواب.\n\n💡 جرب صياغة السؤال بطريقة مختلفة!"
         )
     
-    reply = await message.reply(embed=embed)
+    if base_embed:
+        reply = await message.reply(embeds=[base_embed, ai_embed])
+    else:
+        reply = await message.reply(embed=ai_embed)
+    
     await reply.add_reaction('✅')
     await reply.add_reaction('❌')
 
