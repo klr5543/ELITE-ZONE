@@ -2118,7 +2118,6 @@ async def on_message(message: discord.Message):
     # تنظيف الرسالة
     content = message.content.strip()
     content_lower = content.lower()
-    wants_card = 'دليل' in content_lower or 'guide' in content_lower
     
     # كلمات نتجاهلها (اسم البوت، تحيات قصيرة، إلخ)
     ignore_words = [
@@ -2301,13 +2300,8 @@ async def on_message(message: discord.Message):
                 )
             
             if followup_question:
-                if is_dismantle_question:
-                    await ask_ai_and_reply(message, followup_question)
-                else:
-                    if wants_card:
-                        await ask_ai_and_reply(message, followup_question, base_embed=embed)
-                    else:
-                        await ask_ai_and_reply(message, followup_question)
+                # في أسئلة التفكيك/التطوير/الدروب/القوة نرجّح جواب نصي واحد بدون كرت عنصر
+                await ask_ai_and_reply(message, followup_question)
                 
                 name = bot.search_engine.extract_name(item)
                 bot.context_manager.set_context(message.author.id, name, item)
@@ -2339,7 +2333,7 @@ async def on_message(message: discord.Message):
 
 
 async def ask_ai_and_reply(message: discord.Message, question: str, base_embed: discord.Embed | None = None):
-    """سؤال الـ AI والرد - يمكن إرفاق كرت عنصر في نفس الرد"""
+    """سؤال الـ AI والرد - بشكل يشبه رد لاعب عادي"""
     thinking_msg = await message.reply("🔍 أبحث لك...")
     
     context_parts = []
@@ -2411,21 +2405,14 @@ async def ask_ai_and_reply(message: discord.Message, question: str, base_embed: 
     await thinking_msg.delete()
     
     if ai_result['success']:
-        ai_embed = EmbedBuilder.success(
-            "جواب من AI",
-            ai_result['answer']
-        )
-        ai_embed.set_footer(text=f"via {ai_result['provider']} • 🤖 {BOT_NAME}")
+        text = ai_result['answer']
     else:
-        ai_embed = EmbedBuilder.error(
-            "عذراً",
-            "ما قدرت ألقى جواب.\n\n💡 جرب صياغة السؤال بطريقة مختلفة!"
-        )
+        text = "ما قدرت ألقى جواب واضح من البيانات.\nجرّب تعيد صياغة السؤال بشكل أبسط أو أوضح."
     
     if base_embed:
-        reply = await message.reply(embeds=[base_embed, ai_embed])
+        reply = await message.reply(content=text, embed=base_embed)
     else:
-        reply = await message.reply(embed=ai_embed)
+        reply = await message.reply(content=text)
     
     await reply.add_reaction('✅')
     await reply.add_reaction('❌')
