@@ -440,6 +440,49 @@ class SearchEngine:
         similarity = self.calculate_similarity(query, text)
         return similarity * 0.7
     
+    def _extract_tier_from_text(self, text: str) -> int:
+        """استخراج مستوى العنصر من النص (I, II, III, IV, V)"""
+        if not text:
+            return 0
+        text = str(text).lower()
+        match = re.search(r'\b(i{1,3}|iv|v)\b', text)
+        if not match:
+            return 0
+        roman = match.group(1)
+        mapping = {'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5}
+        return mapping.get(roman, 0)
+    
+    def _base_name_without_tier(self, text: str) -> str:
+        """إرجاع اسم العنصر بدون مستوى"""
+        if not text:
+            return ""
+        text = str(text).strip()
+        return re.sub(r'\s+(i{1,3}|iv|v)\s*$', '', text.lower())
+    
+    def _prefer_highest_tier_variant(self, item: dict) -> dict:
+        """اختيار أعلى مستوى لنفس العنصر"""
+        if not isinstance(item, dict):
+            return item
+        name = self.extract_name(item)
+        base_name = self._base_name_without_tier(name)
+        if not base_name:
+            return item
+        best_item = item
+        best_tier = self._extract_tier_from_text(name)
+        for candidate in self.db.all_data:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_name = self.extract_name(candidate)
+            if not candidate_name or candidate_name == "غير معروف":
+                continue
+            if self._base_name_without_tier(candidate_name) != base_name:
+                continue
+            tier = self._extract_tier_from_text(candidate_name)
+            if tier > best_tier:
+                best_tier = tier
+                best_item = candidate
+        return best_item
+    
     def search(self, query: str, limit: int = 5) -> list:
         """البحث في قاعدة البيانات"""
         if not self.db.loaded:
@@ -449,13 +492,14 @@ class SearchEngine:
         query_translated = self.translate_arabic_query(query_normalized)
         
         # كشف إذا السؤال عن تطوير/ترقية
-        upgrade_keywords = ['تطوير', 'ترقية', 'upgrade', 'الى', 'لل', 'لـ', '4', 'iv', 'iii', 'ii', 'i']
+        upgrade_keywords = ['تطوير', 'ترقية', 'طور', 'اطور', 'upgrade']
         is_upgrade_question = any(keyword in query_normalized for keyword in upgrade_keywords)
         
         # محاولة تصحيح اسم السلاح/العنصر الإنجليزي لو كان فيه خطأ بسيط (ANVEL -> ANVIL)
         english_words = re.findall(r'[a-zA-Z]+', query)
         if english_words:
             main_word = max(english_words, key=len).lower()
+            english_phrase = " ".join(english_words).lower()
             best_item = None
             best_score = 0.0
             
@@ -466,13 +510,17 @@ class SearchEngine:
                 if not name or name == "غير معروف":
                     continue
                 name_lower = name.lower()
-                sim = SequenceMatcher(None, main_word, name_lower).ratio()
+                sim_main = SequenceMatcher(None, main_word, name_lower).ratio()
+                sim_phrase = SequenceMatcher(None, english_phrase, name_lower).ratio()
+                sim = max(sim_main, sim_phrase)
                 if sim > best_score:
                     best_score = sim
                     best_item = item
             
             # لو في تشابه قوي جداً، نرجّح هذا العنصر مباشرة
             if best_item and best_score >= 0.8:
+                if is_upgrade_question:
+                    best_item = self._prefer_highest_tier_variant(best_item)
                 return [{
                     'item': best_item,
                     'score': 1.0,
@@ -2056,6 +2104,17 @@ async def on_message(message: discord.Message):
             "البحث غير متاح حالياً. جرب بعد قليل."
         )
         await message.reply(embed=embed)
+        return
+    
+    resource_keywords = [
+        'mechanical_components',
+        'heavy_gun_parts',
+        'simple_gun_parts',
+        'advanced_mechanical_components',
+        'advanced_simple_gun_parts'
+    ]
+    if any(keyword in content_lower for keyword in resource_keywords):
+        await ask_ai_and_reply(message, question)
         return
     
     # البحث في قاعدة البيانات
