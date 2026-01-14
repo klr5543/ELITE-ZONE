@@ -1524,16 +1524,24 @@ async def on_message(message: discord.Message):
     is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
     
     english_words = re.findall(r'[a-zA-Z_]+', content)
+    english_words_lower = [w.lower() for w in english_words]
     search_query = question
     main_word = None
-    if (is_crafting_question or is_location_question or is_obtain_question) and english_words:
-        id_like = next((w for w in english_words if '_' in w), None)
+    if (is_crafting_question or is_location_question or is_obtain_question) and english_words_lower:
+        id_like = next((w for w in english_words_lower if '_' in w), None)
         if id_like:
-            main_word = id_like.lower()
+            main_word = id_like
             search_query = main_word
         else:
-            main_word = " ".join(english_words).lower()
+            main_word = " ".join(english_words_lower)
             search_query = main_word
+    
+    gun_parts_family_query = (
+        is_obtain_question
+        and 'gun' in english_words_lower
+        and 'parts' in english_words_lower
+        and not any(w in ['light', 'heavy', 'complex'] for w in english_words_lower)
+    )
     
     ai_configured = is_ai_configured()
     use_ai = should_use_ai(question) and ai_configured
@@ -1542,7 +1550,7 @@ async def on_message(message: discord.Message):
     
     results = bot.search_engine.search(search_query, limit=5 if (is_crafting_question or is_obtain_question or is_location_question) else 1)
     
-    if (is_crafting_question or is_obtain_question or is_location_question) and results:
+    if (is_crafting_question or is_obtain_question or is_location_question) and results and not gun_parts_family_query:
         recipe_candidates = []
         for r in results:
             item_candidate = r['item']
@@ -1569,6 +1577,58 @@ async def on_message(message: discord.Message):
     match_threshold = 0.6
     if is_crafting_question or is_obtain_question or is_location_question:
         match_threshold = 0.3
+    
+    is_queen_query = is_obtain_question and any(
+        term in content_lower for term in ['queen', 'كوين', 'الكوين']
+    )
+    
+    if is_queen_query:
+        queen_candidates = [
+            b for b in bot.db.bots
+            if isinstance(b, dict)
+            and 'name' in b
+            and isinstance(b['name'], str)
+            and 'queen' in b['name'].lower()
+        ]
+        if queen_candidates:
+            item = queen_candidates[0]
+            description = None
+            if 'description' in item:
+                desc_val = item['description']
+                if isinstance(desc_val, dict):
+                    description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
+                else:
+                    description = str(desc_val)
+            translated_desc = None
+            if description and description != 'لا يوجد وصف':
+                translated_desc = await bot.ai_manager.translate_to_arabic(description)
+            embed = EmbedBuilder.item_embed(item, translated_desc)
+            drops = item.get('drops') or []
+            if drops and isinstance(drops, list):
+                drop_lines = []
+                for drop_id in drops:
+                    drop_item = next(
+                        (it for it in bot.db.items if isinstance(it, dict) and it.get('id') == drop_id),
+                        None
+                    )
+                    if drop_item:
+                        drop_name = bot.search_engine.extract_name(drop_item)
+                        drop_lines.append(f"- {drop_name}")
+                    else:
+                        drop_lines.append(f"- {drop_id}")
+                if drop_lines:
+                    embed.add_field(
+                        name="القطع التي تسقط منها",
+                        value="\n".join(drop_lines),
+                        inline=False
+                    )
+            reply = await message.reply(embed=embed)
+            name = bot.search_engine.extract_name(item)
+            bot.context_manager.set_context(message.author.id, name, item)
+            await reply.add_reaction('✅')
+            await reply.add_reaction('❌')
+            bot.questions_answered += 1
+            return
     
     if results and results[0]['score'] > match_threshold:
         result = results[0]
@@ -1625,6 +1685,44 @@ async def on_message(message: discord.Message):
                     embed.add_field(name="طرق الحصول", value="\n".join(obtain_lines), inline=False)
             
             reply = await message.reply(embed=embed)
+            
+            if is_obtain_question and gun_parts_family_query:
+                extra_results = []
+                for r in results[1:]:
+                    extra_item = r['item']
+                    extra_name = bot.search_engine.extract_name(extra_item).lower()
+                    if 'gun parts' in extra_name:
+                        extra_results.append(extra_item)
+                for extra_item in extra_results:
+                    extra_description = None
+                    if 'description' in extra_item:
+                        desc_val = extra_item['description']
+                        if isinstance(desc_val, dict):
+                            extra_description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
+                        else:
+                            extra_description = str(desc_val)
+                    extra_translated_desc = None
+                    if extra_description and extra_description != 'لا يوجد وصف':
+                        extra_translated_desc = await bot.ai_manager.translate_to_arabic(extra_description)
+                    extra_embed = EmbedBuilder.item_embed(extra_item, extra_translated_desc)
+                    extra_obtain_lines = []
+                    found_in_extra = extra_item.get('foundIn')
+                    if found_in_extra:
+                        extra_obtain_lines.append(f"- يوجد في: {found_in_extra}")
+                    craft_bench_extra = extra_item.get('craftBench')
+                    if craft_bench_extra:
+                        extra_obtain_lines.append(f"- يتصنع في: {craft_bench_extra}")
+                    if not is_crafting_question:
+                        recipe_extra = extra_item.get('recipe')
+                        if isinstance(recipe_extra, dict) and recipe_extra:
+                            extra_obtain_lines.append("- له وصفة تصنيع، شوف تفاصيل التصنيع")
+                    if extra_obtain_lines:
+                        extra_embed.add_field(
+                            name="طرق الحصول",
+                            value="\n".join(extra_obtain_lines),
+                            inline=False
+                        )
+                    await message.channel.send(embed=extra_embed)
             
             if is_location_question:
                 location = item.get('location') or item.get('spawn_location') or item.get('map')
