@@ -77,12 +77,30 @@ ARABIC_TO_ENGLISH = {
     'ابي': '',
     'ابغى': '',
     'وش': '',
+    'كيف': '',
+    'وين': '',
+    'اين': '',
+    'أين': '',
+    'مكان': '',
+    'موقع': '',
+    'طرق': '',
+    'طريقة': '',
+    'طريق': '',
+    'اسرع': '',
+    'أسرع': '',
+    'سبون': '',
+    'السبون': '',
+    'دليل': '',
     
     # فليرات
     'فلير': 'flare',
     'الفلير': 'flare',
     'فلارات': 'flare',
     'الفلارات': 'flare',
+    
+    # بوس THE QUEEN
+    'كوين': 'queen',
+    'الكوين': 'queen',
     
     # ندرة
     'ذهبي': 'legendary',
@@ -1486,6 +1504,8 @@ async def on_message(message: discord.Message):
     
     # حقن السياق
     question = bot.context_manager.inject_context(message.author.id, content)
+    if question.startswith('دليل '):
+        question = question[5:]
     
     crafting_keywords = ['ادوات', 'أدوات', 'تصنع', 'تسوي', 'تصنيع', 'recipe', 'craft', 'مكونات', 'مخطط']
     is_crafting_question = any(keyword in content_lower for keyword in crafting_keywords)
@@ -1503,10 +1523,10 @@ async def on_message(message: discord.Message):
     ]
     is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
     
-    english_words = re.findall(r'[a-zA-Z]+', content)
+    english_words = re.findall(r'[a-zA-Z_]+', content)
     search_query = question
     main_word = None
-    if is_crafting_question and english_words:
+    if (is_crafting_question or is_location_question or is_obtain_question) and english_words:
         main_word = max(english_words, key=len).lower()
         search_query = main_word
     
