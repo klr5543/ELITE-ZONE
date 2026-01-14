@@ -1,909 +1,1118 @@
 """
-╔══════════════════════════════════════════════════════════════════╗
-║                    🎮 بوت دليل - ARC Raiders                      ║
-║                 بوت ذكي للإجابة على أسئلة اللعبة                   ║
-║                     صنع بـ ❤️ لسيرفر ELITE-ZONE                   ║
-╚══════════════════════════════════════════════════════════════════╝
-
-الميزات:
-✅ يستخدم كل API Keys المتاحة (5 محركات AI)
-✅ يحفظ الأسئلة والأجوبة (توفير الميزانية!)
-✅ Database First (99.9% مجاني)
-✅ AI Backup (0.1% فقط)
-✅ Rate Limiting ذكي
+╔══════════════════════════════════════════════════════════════╗
+║                    بوت دليل - Daleel Bot                      ║
+║              Q&A Bot for ARC Raiders Community                ║
+║                     By: SPECTRE Leader                        ║
+╚══════════════════════════════════════════════════════════════╝
 """
 
 import discord
 from discord.ext import commands
 from discord import app_commands
-import json
 import os
-import re
+import json
 import asyncio
 import aiohttp
-import hashlib
-from pathlib import Path
-from typing import Optional, List, Dict, Tuple
+import time
+import logging
 from datetime import datetime, timedelta
-from collections import defaultdict
+from pathlib import Path
+from difflib import SequenceMatcher
+import re
 
-# ══════════════════════════════════════════════════════════════════
-#                         إعدادات البوت
-# ══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# التهيئة - Configuration
+# ═══════════════════════════════════════════════════════════════
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
+# Environment Variables
+DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
+ALLOWED_GUILD_ID = int(os.getenv('ALLOWED_GUILD_ID', '621014916173791288'))
+ALLOWED_CHANNEL_ID = int(os.getenv('ALLOWED_CHANNEL_ID', '1459709364301594848'))
+LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '1459724977346445429'))
+OWNER_ID = int(os.getenv('OWNER_ID', '595228721946820614'))
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+# API Keys
+DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
-# ══════════════════════════════════════════════════════════════════
-#                    تحميل المتغيرات من Railway
-# ══════════════════════════════════════════════════════════════════
+# Bot Settings
+BOT_NAME = "دليل"
+BOT_VERSION = "2.0.0"
 
-# إعدادات السيرفر
-ALLOWED_GUILD_ID = int(os.getenv('ALLOWED_GUILD_ID', '0'))
-ALLOWED_CHANNEL_ID = int(os.getenv('ALLOWED_CHANNEL_ID', '0'))
-LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '0'))
-OWNER_ID = int(os.getenv('OWNER_ID', '0'))
-
-# ✅ كل API Keys من Railway
-API_KEYS = {
-    'anthropic': os.getenv('ANTHROPIC_API_KEY', ''),
-    'deepseek': os.getenv('DEEPSEEK_API_KEY', ''),
-    'openai': os.getenv('OPENAI_API_KEY', ''),
-    'groq': os.getenv('GROQ_API_KEY', ''),
-    'google': os.getenv('GOOGLE_API_KEY', ''),
+# Colors
+COLORS = {
+    "success": 0x2ecc71,    # أخضر
+    "error": 0xe74c3c,      # أحمر
+    "warning": 0xf39c12,    # برتقالي
+    "info": 0x3498db,       # أزرق
+    "primary": 0x9b59b6,    # بنفسجي
 }
 
-# أسماء البوت للتعرف عليها
-BOT_NAMES = [
-    'دليل', 'دلييل', 'دليييل', 'daleel', 'guide',
-    'يا دليل', 'يادليل', 'هاي دليل', 'مرحبا دليل',
-]
+# Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('Daleel')
 
-# Rate Limiting
-user_cooldowns: Dict[int, List[datetime]] = defaultdict(list)
-RATE_LIMIT = 5  # أسئلة
-RATE_WINDOW = 60  # ثانية
+# ═══════════════════════════════════════════════════════════════
+# قاعدة البيانات - Database Manager
+# ═══════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════
-#                    💾 نظام حفظ الأسئلة الذكي
-#                    (توفير الميزانية!)
-# ══════════════════════════════════════════════════════════════════
-
-class SmartCache:
-    """
-    نظام ذكي لحفظ الأسئلة والأجوبة
-    = توفير 90%+ من تكلفة AI!
-    """
+class DatabaseManager:
+    """مدير قاعدة البيانات - يحمل كل بيانات اللعبة"""
     
-    def __init__(self, cache_file: str = "learned_answers.json"):
-        self.cache_file = Path(cache_file)
-        self.cache: Dict[str, dict] = {}
-        self.stats = {
-            "cache_hits": 0,
-            "cache_misses": 0,
-            "ai_calls": 0,
-            "money_saved": 0.0
-        }
-        self._load_cache()
-    
-    def _load_cache(self):
-        """تحميل الأجوبة المحفوظة"""
-        if self.cache_file.exists():
-            try:
-                with open(self.cache_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.cache = data.get('answers', {})
-                    self.stats = data.get('stats', self.stats)
-                print(f"✅ تم تحميل {len(self.cache)} جواب محفوظ")
-            except Exception as e:
-                print(f"⚠️ خطأ في تحميل الـ cache: {e}")
-                self.cache = {}
-    
-    def _save_cache(self):
-        """حفظ الأجوبة"""
+    def __init__(self):
+        self.items = []
+        self.quests = []
+        self.maps = []
+        self.traders = []
+        self.workshop = []
+        self.all_data = []
+        self.loaded = False
+        
+    def load_all(self):
+        """تحميل كل البيانات من المجلدات"""
+        base_path = Path('arcraiders-data')
+        
+        if not base_path.exists():
+            logger.warning("مجلد arcraiders-data غير موجود!")
+            return False
+        
         try:
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'answers': self.cache,
-                    'stats': self.stats,
-                    'last_updated': datetime.now().isoformat()
-                }, f, ensure_ascii=False, indent=2)
+            # تحميل Items
+            items_path = base_path / 'items'
+            if items_path.exists():
+                for file in items_path.glob('*.json'):
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                self.items.extend(data)
+                            else:
+                                self.items.append(data)
+                    except Exception as e:
+                        logger.error(f"خطأ في تحميل {file}: {e}")
+            
+            # تحميل Items In-Game
+            items_ingame_path = base_path / 'items_ingame'
+            if items_ingame_path.exists():
+                for file in items_ingame_path.glob('*.json'):
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                self.items.extend(data)
+                            else:
+                                self.items.append(data)
+                    except Exception as e:
+                        logger.error(f"خطأ في تحميل {file}: {e}")
+            
+            # تحميل Quests
+            quests_path = base_path / 'quests'
+            if quests_path.exists():
+                for file in quests_path.glob('*.json'):
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                self.quests.extend(data)
+                            else:
+                                self.quests.append(data)
+                    except Exception as e:
+                        logger.error(f"خطأ في تحميل {file}: {e}")
+            
+            # تحميل Maps
+            maps_path = base_path / 'maps'
+            if maps_path.exists():
+                for file in maps_path.glob('*.json'):
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                self.maps.extend(data)
+                            else:
+                                self.maps.append(data)
+                    except Exception as e:
+                        logger.error(f"خطأ في تحميل {file}: {e}")
+            
+            # تحميل Traders
+            traders_path = base_path / 'traders'
+            if traders_path.exists():
+                for file in traders_path.glob('*.json'):
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                self.traders.extend(data)
+                            else:
+                                self.traders.append(data)
+                    except Exception as e:
+                        logger.error(f"خطأ في تحميل {file}: {e}")
+            
+            # تحميل Workshop
+            workshop_path = base_path / 'workshop'
+            if workshop_path.exists():
+                for file in workshop_path.glob('*.json'):
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                self.workshop.extend(data)
+                            else:
+                                self.workshop.append(data)
+                    except Exception as e:
+                        logger.error(f"خطأ في تحميل {file}: {e}")
+            
+            # تحميل ملفات JSON الرئيسية
+            json_files = ['bots.json', 'maps.json', 'trades.json', 'skillNodes.json', 'projects.json']
+            for json_file in json_files:
+                file_path = base_path / json_file
+                if file_path.exists():
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                self.all_data.extend(data)
+                    except Exception as e:
+                        logger.error(f"خطأ في تحميل {json_file}: {e}")
+            
+            # دمج كل البيانات
+            self.all_data.extend(self.items)
+            self.all_data.extend(self.quests)
+            self.all_data.extend(self.maps)
+            self.all_data.extend(self.traders)
+            self.all_data.extend(self.workshop)
+            
+            self.loaded = True
+            logger.info(f"✅ تم تحميل {len(self.all_data)} عنصر من قاعدة البيانات")
+            return True
+            
         except Exception as e:
-            print(f"⚠️ خطأ في حفظ الـ cache: {e}")
+            logger.error(f"خطأ في تحميل قاعدة البيانات: {e}")
+            return False
     
-    def _normalize_question(self, question: str) -> str:
-        """تطبيع السؤال للمقارنة"""
-        # إزالة التشكيل
-        arabic_diacritics = re.compile(r'[\u064B-\u065F\u0670]')
-        question = arabic_diacritics.sub('', question)
-        # تحويل للصغير
-        question = question.lower().strip()
-        # إزالة علامات الترقيم
-        question = re.sub(r'[؟?!.,،؛:\s]+', ' ', question)
-        # إزالة الكلمات الزائدة
-        stopwords = ['يا', 'هاي', 'مرحبا', 'دليل', 'فلو', 'ممكن', 'لو', 'سمحت']
-        for word in stopwords:
-            question = question.replace(word, '')
-        return question.strip()
-    
-    def _get_question_hash(self, question: str) -> str:
-        """إنشاء hash للسؤال"""
-        normalized = self._normalize_question(question)
-        return hashlib.md5(normalized.encode()).hexdigest()[:16]
-    
-    def get_cached_answer(self, question: str) -> Optional[str]:
-        """البحث عن جواب محفوظ"""
-        q_hash = self._get_question_hash(question)
-        
-        if q_hash in self.cache:
-            self.stats["cache_hits"] += 1
-            self.stats["money_saved"] += 0.002  # توفير $0.002 لكل سؤال
-            
-            cached = self.cache[q_hash]
-            cached["use_count"] = cached.get("use_count", 0) + 1
-            cached["last_used"] = datetime.now().isoformat()
-            self._save_cache()
-            
-            print(f"💾 Cache HIT! توفير ${self.stats['money_saved']:.4f}")
-            return cached["answer"]
-        
-        self.stats["cache_misses"] += 1
-        return None
-    
-    def save_answer(self, question: str, answer: str, source: str = "ai"):
-        """حفظ جواب جديد"""
-        q_hash = self._get_question_hash(question)
-        
-        self.cache[q_hash] = {
-            "question": question,
-            "answer": answer,
-            "source": source,
-            "created": datetime.now().isoformat(),
-            "use_count": 1,
-            "last_used": datetime.now().isoformat()
+    def get_stats(self):
+        """إحصائيات قاعدة البيانات"""
+        return {
+            'items': len(self.items),
+            'quests': len(self.quests),
+            'maps': len(self.maps),
+            'traders': len(self.traders),
+            'workshop': len(self.workshop),
+            'total': len(self.all_data)
         }
-        
-        self._save_cache()
-        print(f"💾 تم حفظ جواب جديد (المجموع: {len(self.cache)})")
+
+# ═══════════════════════════════════════════════════════════════
+# محرك البحث - Search Engine
+# ═══════════════════════════════════════════════════════════════
+
+class SearchEngine:
+    """محرك البحث الذكي - يبحث في قاعدة البيانات"""
     
-    def get_stats(self) -> dict:
-        """إحصائيات التوفير"""
-        total = self.stats["cache_hits"] + self.stats["cache_misses"]
-        hit_rate = (self.stats["cache_hits"] / total * 100) if total > 0 else 0
+    def __init__(self, database: DatabaseManager):
+        self.db = database
+        self.search_history = {}
+        
+    def normalize_text(self, text: str) -> str:
+        """تنظيف وتوحيد النص"""
+        if not text:
+            return ""
+        text = text.lower().strip()
+        # إزالة الأحرف الخاصة
+        text = re.sub(r'[^\w\s\u0600-\u06FF]', ' ', text)
+        # توحيد المسافات
+        text = re.sub(r'\s+', ' ', text)
+        return text
+    
+    def calculate_similarity(self, text1: str, text2: str) -> float:
+        """حساب نسبة التشابه بين نصين"""
+        return SequenceMatcher(None, 
+                               self.normalize_text(text1), 
+                               self.normalize_text(text2)).ratio()
+    
+    def search(self, query: str, limit: int = 5) -> list:
+        """البحث في قاعدة البيانات"""
+        if not self.db.loaded:
+            return []
+        
+        query_normalized = self.normalize_text(query)
+        results = []
+        
+        for item in self.db.all_data:
+            if not isinstance(item, dict):
+                continue
+                
+            score = 0
+            matched_field = None
+            
+            # البحث في الحقول المختلفة
+            searchable_fields = ['name', 'title', 'displayName', 'description', 
+                                'category', 'type', 'location', 'nameKey']
+            
+            for field in searchable_fields:
+                if field in item and item[field]:
+                    field_value = str(item[field])
+                    field_normalized = self.normalize_text(field_value)
+                    
+                    # تطابق تام
+                    if query_normalized == field_normalized:
+                        score = 1.0
+                        matched_field = field
+                        break
+                    
+                    # يحتوي على الاستعلام
+                    if query_normalized in field_normalized:
+                        current_score = 0.8 + (len(query_normalized) / len(field_normalized)) * 0.2
+                        if current_score > score:
+                            score = current_score
+                            matched_field = field
+                    
+                    # تشابه جزئي
+                    similarity = self.calculate_similarity(query, field_value)
+                    if similarity > score:
+                        score = similarity
+                        matched_field = field
+            
+            if score > 0.3:  # الحد الأدنى للتشابه
+                results.append({
+                    'item': item,
+                    'score': score,
+                    'matched_field': matched_field
+                })
+        
+        # ترتيب النتائج حسب الدرجة
+        results.sort(key=lambda x: x['score'], reverse=True)
+        return results[:limit]
+    
+    def find_similar(self, query: str, limit: int = 3) -> list:
+        """إيجاد عناصر مشابهة للاقتراحات"""
+        results = self.search(query, limit=limit)
+        suggestions = []
+        
+        for r in results:
+            item = r['item']
+            name = item.get('name') or item.get('title') or item.get('displayName', 'Unknown')
+            suggestions.append(name)
+        
+        return suggestions
+
+# ═══════════════════════════════════════════════════════════════
+# نظام AI - AI Manager
+# ═══════════════════════════════════════════════════════════════
+
+class AIManager:
+    """مدير الذكاء الاصطناعي - 5 مستويات احتياطية"""
+    
+    def __init__(self):
+        self.daily_usage = 0
+        self.daily_limit = 50
+        self.last_reset = datetime.now().date()
+        self.usage_stats = {
+            'deepseek': 0,
+            'groq': 0,
+            'openai': 0,
+            'anthropic': 0,
+            'google': 0
+        }
+    
+    def check_daily_limit(self) -> bool:
+        """فحص الحد اليومي"""
+        today = datetime.now().date()
+        if today > self.last_reset:
+            self.daily_usage = 0
+            self.last_reset = today
+        return self.daily_usage < self.daily_limit
+    
+    async def ask_ai(self, question: str, context: str = "") -> dict:
+        """سؤال الـ AI مع نظام الاحتياطي"""
+        
+        if not self.check_daily_limit():
+            return {
+                'success': False,
+                'answer': "⚠️ تم الوصول للحد اليومي من استخدام AI",
+                'provider': None
+            }
+        
+        system_prompt = f"""أنت "دليل" - بوت مساعد لمجتمع ARC Raiders العربي.
+        
+قواعد الرد:
+1. رد بالعربي دائماً
+2. كن مختصراً ومفيداً
+3. لو ما تعرف الجواب، قل ذلك بصراحة
+4. ركز على معلومات اللعبة فقط
+
+{f'السياق: {context}' if context else ''}"""
+        
+        # ترتيب المزودين
+        providers = [
+            ('deepseek', self._ask_deepseek),
+            ('groq', self._ask_groq),
+            ('openai', self._ask_openai),
+            ('anthropic', self._ask_anthropic),
+            ('google', self._ask_google),
+        ]
+        
+        for provider_name, provider_func in providers:
+            try:
+                result = await provider_func(question, system_prompt)
+                if result:
+                    self.daily_usage += 1
+                    self.usage_stats[provider_name] += 1
+                    return {
+                        'success': True,
+                        'answer': result,
+                        'provider': provider_name
+                    }
+            except Exception as e:
+                logger.warning(f"فشل {provider_name}: {e}")
+                continue
         
         return {
-            "total_answers": len(self.cache),
-            "cache_hits": self.stats["cache_hits"],
-            "cache_misses": self.stats["cache_misses"],
-            "hit_rate": f"{hit_rate:.1f}%",
-            "ai_calls": self.stats["ai_calls"],
-            "money_saved": f"${self.stats['money_saved']:.4f}"
+            'success': False,
+            'answer': "عذراً، حدث خطأ في الاتصال بالـ AI",
+            'provider': None
         }
-
-# إنشاء الـ cache
-smart_cache = SmartCache()
-
-# ══════════════════════════════════════════════════════════════════
-#                         تحميل البيانات
-# ══════════════════════════════════════════════════════════════════
-
-DATA_PATH = Path("arcraiders-data")
-
-def load_json(filename: str) -> list:
-    """تحميل ملف JSON"""
-    filepath = DATA_PATH / filename
-    if filepath.exists():
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return []
-
-def load_items() -> dict:
-    """تحميل جميع الـ items"""
-    items = {}
-    items_path = DATA_PATH / "items"
-    if items_path.exists():
-        for file in items_path.glob("*.json"):
-            try:
-                with open(file, 'r', encoding='utf-8') as f:
-                    item_data = json.load(f)
-                    if 'id' in item_data:
-                        items[item_data['id']] = item_data
-            except Exception as e:
-                print(f"⚠️ خطأ في قراءة {file.name}: {e}")
-    return items
-
-def load_quests() -> list:
-    """تحميل المهام"""
-    quests = []
-    quests_path = DATA_PATH / "quests"
-    if quests_path.exists():
-        for file in quests_path.glob("*.json"):
-            try:
-                with open(file, 'r', encoding='utf-8') as f:
-                    quest_data = json.load(f)
-                    quests.append(quest_data)
-            except Exception as e:
-                print(f"⚠️ خطأ في قراءة {file.name}: {e}")
-    return quests
-
-# تحميل البيانات
-print("📦 جاري تحميل البيانات...")
-ITEMS = load_items()
-BOTS = load_json("bots.json")
-MAPS = load_json("maps.json")
-QUESTS = load_quests()
-
-print(f"✅ تم تحميل {len(ITEMS)} قطعة")
-print(f"✅ تم تحميل {len(BOTS)} ARC")
-print(f"✅ تم تحميل {len(MAPS)} خريطة")
-print(f"✅ تم تحميل {len(QUESTS)} مهمة")
-
-# طباعة حالة API Keys
-print("\n🔑 حالة API Keys:")
-for name, key in API_KEYS.items():
-    status = "✅" if key else "❌"
-    print(f"   {status} {name.upper()}")
-
-# ══════════════════════════════════════════════════════════════════
-#                         دوال مساعدة
-# ══════════════════════════════════════════════════════════════════
-
-def normalize_text(text: str) -> str:
-    """تطبيع النص"""
-    arabic_diacritics = re.compile(r'[\u064B-\u065F\u0670]')
-    text = arabic_diacritics.sub('', text)
-    text = text.lower().strip()
-    text = re.sub(r'[؟?!.,،؛:]+', '', text)
-    return text
-
-def check_rate_limit(user_id: int) -> Tuple[bool, int]:
-    """التحقق من Rate Limit"""
-    now = datetime.now()
-    user_cooldowns[user_id] = [
-        t for t in user_cooldowns[user_id] 
-        if now - t < timedelta(seconds=RATE_WINDOW)
-    ]
     
-    if len(user_cooldowns[user_id]) >= RATE_LIMIT:
-        oldest = min(user_cooldowns[user_id])
-        wait_time = RATE_WINDOW - (now - oldest).seconds
-        return False, wait_time
+    async def _ask_deepseek(self, question: str, system_prompt: str) -> str:
+        """DeepSeek API"""
+        if not DEEPSEEK_API_KEY:
+            return None
+            
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                'https://api.deepseek.com/v1/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': 'deepseek-chat',
+                    'messages': [
+                        {'role': 'system', 'content': system_prompt},
+                        {'role': 'user', 'content': question}
+                    ],
+                    'max_tokens': 500,
+                    'temperature': 0.7
+                },
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['choices'][0]['message']['content']
+        return None
     
-    user_cooldowns[user_id].append(now)
-    return True, 0
+    async def _ask_groq(self, question: str, system_prompt: str) -> str:
+        """Groq API"""
+        if not GROQ_API_KEY:
+            return None
+            
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                'https://api.groq.com/openai/v1/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {GROQ_API_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': 'llama-3.3-70b-versatile',
+                    'messages': [
+                        {'role': 'system', 'content': system_prompt},
+                        {'role': 'user', 'content': question}
+                    ],
+                    'max_tokens': 500,
+                    'temperature': 0.7
+                },
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['choices'][0]['message']['content']
+        return None
+    
+    async def _ask_openai(self, question: str, system_prompt: str) -> str:
+        """OpenAI API"""
+        if not OPENAI_API_KEY:
+            return None
+            
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                'https://api.openai.com/v1/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {OPENAI_API_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': 'gpt-4o-mini',
+                    'messages': [
+                        {'role': 'system', 'content': system_prompt},
+                        {'role': 'user', 'content': question}
+                    ],
+                    'max_tokens': 500,
+                    'temperature': 0.7
+                },
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['choices'][0]['message']['content']
+        return None
+    
+    async def _ask_anthropic(self, question: str, system_prompt: str) -> str:
+        """Anthropic Claude API"""
+        if not ANTHROPIC_API_KEY:
+            return None
+            
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                'https://api.anthropic.com/v1/messages',
+                headers={
+                    'x-api-key': ANTHROPIC_API_KEY,
+                    'Content-Type': 'application/json',
+                    'anthropic-version': '2023-06-01'
+                },
+                json={
+                    'model': 'claude-3-haiku-20240307',
+                    'max_tokens': 500,
+                    'system': system_prompt,
+                    'messages': [
+                        {'role': 'user', 'content': question}
+                    ]
+                },
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['content'][0]['text']
+        return None
+    
+    async def _ask_google(self, question: str, system_prompt: str) -> str:
+        """Google Gemini API"""
+        if not GOOGLE_API_KEY:
+            return None
+            
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f'https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}',
+                headers={'Content-Type': 'application/json'},
+                json={
+                    'contents': [{
+                        'parts': [{'text': f"{system_prompt}\n\nسؤال: {question}"}]
+                    }],
+                    'generationConfig': {
+                        'maxOutputTokens': 500,
+                        'temperature': 0.7
+                    }
+                },
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['candidates'][0]['content']['parts'][0]['text']
+        return None
 
-def is_bot_mentioned(message: discord.Message) -> bool:
-    """التحقق إذا البوت مذكور"""
-    content = normalize_text(message.content)
-    
-    if bot.user in message.mentions:
-        return True
-    
-    for name in BOT_NAMES:
-        if name in content:
-            return True
-    
-    return False
+# ═══════════════════════════════════════════════════════════════
+# نظام السياق - Context Manager
+# ═══════════════════════════════════════════════════════════════
 
-def extract_question(content: str) -> str:
-    """استخراج السؤال"""
-    content = re.sub(r'<@!?\d+>', '', content)
-    for name in BOT_NAMES:
-        content = re.sub(rf'\b{name}\b', '', content, flags=re.IGNORECASE)
-    return content.strip()
-
-# ══════════════════════════════════════════════════════════════════
-#                    نظام البحث (3 مستويات)
-# ══════════════════════════════════════════════════════════════════
-
-def search_items(query: str, limit: int = 5) -> List[dict]:
-    """البحث في القطع"""
-    query = normalize_text(query)
-    results = []
+class ContextManager:
+    """مدير سياق المحادثات - يتذكر آخر سؤال لكل مستخدم"""
     
-    for item_id, item in ITEMS.items():
-        score = 0
-        name_en = item.get('name', {}).get('en', '').lower()
+    def __init__(self, timeout_minutes: int = 5):
+        self.contexts = {}  # {user_id: {'item': ..., 'timestamp': ...}}
+        self.timeout = timedelta(minutes=timeout_minutes)
+    
+    def set_context(self, user_id: int, item_name: str, item_data: dict = None):
+        """حفظ السياق للمستخدم"""
+        self.contexts[user_id] = {
+            'item': item_name,
+            'data': item_data,
+            'timestamp': datetime.now()
+        }
+    
+    def get_context(self, user_id: int) -> dict:
+        """جلب السياق للمستخدم"""
+        if user_id not in self.contexts:
+            return None
         
-        if query == name_en or query == item_id.lower():
-            score = 100
-        elif name_en.startswith(query) or item_id.lower().startswith(query):
-            score = 80
-        elif query in name_en or query in item_id.lower():
-            score = 60
-        elif 'description' in item:
-            desc = item['description'].get('en', '').lower()
-            if query in desc:
-                score = 40
+        context = self.contexts[user_id]
+        if datetime.now() - context['timestamp'] > self.timeout:
+            del self.contexts[user_id]
+            return None
         
-        if score > 0:
-            results.append((score, item))
+        return context
     
-    results.sort(key=lambda x: x[0], reverse=True)
-    return [r[1] for r in results[:limit]]
-
-def search_arcs(query: str) -> List[dict]:
-    """البحث في ARCs"""
-    query = normalize_text(query)
-    results = []
+    def clear_context(self, user_id: int):
+        """مسح السياق"""
+        if user_id in self.contexts:
+            del self.contexts[user_id]
     
-    for arc in BOTS:
-        name = arc.get('name', '').lower()
-        arc_id = arc.get('id', '').lower()
+    def inject_context(self, user_id: int, question: str) -> str:
+        """حقن السياق في السؤال"""
+        context = self.get_context(user_id)
+        if not context:
+            return question
         
-        if query in name or query in arc_id:
-            results.append(arc)
-    
-    return results
-
-def search_maps(query: str) -> List[dict]:
-    """البحث في الخرائط"""
-    query = normalize_text(query)
-    results = []
-    
-    for map_data in MAPS:
-        name = map_data.get('name', {}).get('en', '').lower()
-        map_id = map_data.get('id', '').lower()
+        # كلمات تدل على سؤال متابعة
+        follow_up_keywords = [
+            'نسبة', 'spawn', 'الموقع', 'location', 'وين', 'where',
+            'كم', 'how much', 'الندرة', 'rarity', 'كيف', 'how',
+            'طيب', 'وش', 'ايش', 'ليش', 'متى', 'هل', 'فين'
+        ]
         
-        if query in name or query in map_id:
-            results.append(map_data)
-    
-    return results
+        question_lower = question.lower()
+        is_follow_up = any(keyword in question_lower for keyword in follow_up_keywords)
+        
+        # إذا السؤال قصير أو يحتوي كلمات متابعة
+        if is_follow_up or len(question.split()) <= 3:
+            return f"{context['item']} {question}"
+        
+        return question
 
-def search_all(query: str) -> Dict[str, list]:
-    """بحث شامل"""
-    return {
-        'items': search_items(query, limit=3),
-        'arcs': search_arcs(query),
-        'maps': search_maps(query)
-    }
+# ═══════════════════════════════════════════════════════════════
+# نظام الحماية - Anti-Spam
+# ═══════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════
-#                    🤖 AI Integration (5 محركات!)
-# ══════════════════════════════════════════════════════════════════
+class AntiSpam:
+    """نظام منع السبام - 3 أسئلة/دقيقة"""
+    
+    def __init__(self, max_messages: int = 3, window_seconds: int = 60):
+        self.user_messages = {}  # {user_id: [timestamps]}
+        self.max_messages = max_messages
+        self.window = timedelta(seconds=window_seconds)
+    
+    def check(self, user_id: int) -> tuple:
+        """فحص إذا المستخدم يقدر يرسل"""
+        now = datetime.now()
+        
+        if user_id not in self.user_messages:
+            self.user_messages[user_id] = []
+        
+        # تنظيف الرسائل القديمة
+        self.user_messages[user_id] = [
+            ts for ts in self.user_messages[user_id]
+            if now - ts < self.window
+        ]
+        
+        if len(self.user_messages[user_id]) >= self.max_messages:
+            oldest = min(self.user_messages[user_id])
+            wait_time = int((oldest + self.window - now).total_seconds())
+            return False, wait_time
+        
+        self.user_messages[user_id].append(now)
+        return True, 0
 
-async def ask_ai(question: str, context: str = "") -> Optional[str]:
-    """
-    سؤال AI مع fallback ذكي
-    الترتيب: DeepSeek → Groq → OpenAI → Claude → Google
-    (من الأرخص للأغلى)
-    """
-    
-    system_prompt = """أنت "دليل" - بوت مساعد عربي للعبة ARC Raiders.
+# ═══════════════════════════════════════════════════════════════
+# منشئ الـ Embeds
+# ═══════════════════════════════════════════════════════════════
 
-مهمتك:
-- الإجابة على أسئلة اللاعبين عن اللعبة
-- تقديم معلومات دقيقة ومفيدة
-- الرد بشكل مختصر وواضح (3-5 جمل)
-
-قواعد:
-- لا تخترع معلومات
-- إذا ما تعرف، قول "ما عندي معلومة"
-- كن ودود ومساعد"""
-
-    user_prompt = f"""السؤال: {question}
-{f'معلومات متاحة: {context}' if context else ''}
-أجب بشكل مختصر:"""
-
-    # 1️⃣ DeepSeek (الأرخص!)
-    if API_KEYS['deepseek']:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.deepseek.com/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {API_KEYS['deepseek']}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "deepseek-chat",
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        "max_tokens": 500,
-                        "temperature": 0.7
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        smart_cache.stats["ai_calls"] += 1
-                        return data['choices'][0]['message']['content']
-        except Exception as e:
-            print(f"⚠️ DeepSeek Error: {e}")
+class EmbedBuilder:
+    """منشئ الـ Embeds الجميلة"""
     
-    # 2️⃣ Groq (سريع جداً!)
-    if API_KEYS['groq']:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {API_KEYS['groq']}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "llama-3.1-70b-versatile",
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        "max_tokens": 500,
-                        "temperature": 0.7
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        smart_cache.stats["ai_calls"] += 1
-                        return data['choices'][0]['message']['content']
-        except Exception as e:
-            print(f"⚠️ Groq Error: {e}")
-    
-    # 3️⃣ OpenAI GPT-3.5 (موثوق)
-    if API_KEYS['openai']:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {API_KEYS['openai']}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "gpt-3.5-turbo",
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        "max_tokens": 500,
-                        "temperature": 0.7
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        smart_cache.stats["ai_calls"] += 1
-                        return data['choices'][0]['message']['content']
-        except Exception as e:
-            print(f"⚠️ OpenAI Error: {e}")
-    
-    # 4️⃣ Claude (الأذكى)
-    if API_KEYS['anthropic']:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": API_KEYS['anthropic'],
-                        "anthropic-version": "2023-06-01",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "claude-3-haiku-20240307",
-                        "max_tokens": 500,
-                        "system": system_prompt,
-                        "messages": [{"role": "user", "content": user_prompt}]
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        smart_cache.stats["ai_calls"] += 1
-                        return data['content'][0]['text']
-        except Exception as e:
-            print(f"⚠️ Claude Error: {e}")
-    
-    # 5️⃣ Google Gemini
-    if API_KEYS['google']:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEYS['google']}",
-                    headers={"Content-Type": "application/json"},
-                    json={
-                        "contents": [{
-                            "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]
-                        }]
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        smart_cache.stats["ai_calls"] += 1
-                        return data['candidates'][0]['content']['parts'][0]['text']
-        except Exception as e:
-            print(f"⚠️ Google Error: {e}")
-    
-    return None
-
-# ══════════════════════════════════════════════════════════════════
-#                    معالجة الأسئلة الذكية
-# ══════════════════════════════════════════════════════════════════
-
-async def process_question(question: str) -> Tuple[str, discord.Embed]:
-    """معالجة السؤال بذكاء"""
-    
-    query = normalize_text(question)
-    
-    # ══════════════════════════════════════
-    # المستوى 0: التحقق من الـ Cache أولاً! 💾
-    # ══════════════════════════════════════
-    
-    cached_answer = smart_cache.get_cached_answer(question)
-    if cached_answer:
+    @staticmethod
+    def success(title: str, description: str) -> discord.Embed:
         embed = discord.Embed(
-            title="💬 رد دليل",
-            description=cached_answer,
-            color=discord.Color.green()
+            title=f"✅ {title}",
+            description=description,
+            color=COLORS["success"],
+            timestamp=datetime.now()
         )
-        embed.set_footer(text="💾 من الذاكرة (مجاني!)")
-        return "", embed
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
     
-    # ══════════════════════════════════════
-    # المستوى 1: البحث في Database
-    # ══════════════════════════════════════
+    @staticmethod
+    def error(title: str, description: str) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"❌ {title}",
+            description=description,
+            color=COLORS["error"],
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
     
-    results = search_all(query)
+    @staticmethod
+    def warning(title: str, description: str) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"⚠️ {title}",
+            description=description,
+            color=COLORS["warning"],
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
     
-    if results['items']:
-        item = results['items'][0]
-        embed = create_item_embed(item)
-        # حفظ في الـ cache
-        smart_cache.save_answer(question, f"معلومات عن {item['name']['en']}", "database")
-        return "📦 لقيت لك المعلومات:", embed
+    @staticmethod
+    def info(title: str, description: str) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"ℹ️ {title}",
+            description=description,
+            color=COLORS["info"],
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
     
-    if results['arcs']:
-        arc = results['arcs'][0]
-        embed = create_arc_embed(arc)
-        smart_cache.save_answer(question, f"معلومات عن {arc['name']}", "database")
-        return "🤖 هذا الـ ARC:", embed
-    
-    if results['maps']:
-        map_data = results['maps'][0]
-        embed = create_map_embed(map_data)
-        smart_cache.save_answer(question, f"معلومات عن {map_data['name']['en']}", "database")
-        return "🗺️ معلومات الخريطة:", embed
-    
-    # ══════════════════════════════════════
-    # المستوى 2: سؤال AI (مع حفظ الجواب!)
-    # ══════════════════════════════════════
-    
-    context_parts = []
-    if ITEMS:
-        sample_items = list(ITEMS.keys())[:20]
-        context_parts.append(f"Items: {', '.join(sample_items)}")
-    if BOTS:
-        arc_names = [b['name'] for b in BOTS[:10]]
-        context_parts.append(f"ARCs: {', '.join(arc_names)}")
-    
-    context = "\n".join(context_parts)
-    
-    ai_response = await ask_ai(question, context)
-    
-    if ai_response:
-        # ✅ حفظ الجواب للمستقبل!
-        smart_cache.save_answer(question, ai_response, "ai")
+    @staticmethod
+    def item_embed(item: dict) -> discord.Embed:
+        """إنشاء Embed لعنصر من اللعبة"""
+        name = item.get('name') or item.get('title') or item.get('displayName', 'Unknown')
+        description = item.get('description', 'لا يوجد وصف')
         
         embed = discord.Embed(
-            title="💬 رد دليل",
-            description=ai_response,
-            color=discord.Color.blue()
+            title=f"📦 {name}",
+            description=description[:500] if description else "لا يوجد وصف",
+            color=COLORS["primary"],
+            timestamp=datetime.now()
         )
-        embed.set_footer(text="🤖 AI (تم الحفظ للمستقبل)")
-        return "", embed
+        
+        # إضافة الحقول
+        if item.get('category'):
+            embed.add_field(name="📁 الفئة", value=item['category'], inline=True)
+        
+        if item.get('type'):
+            embed.add_field(name="🏷️ النوع", value=item['type'], inline=True)
+        
+        if item.get('rarity'):
+            rarity_emoji = {
+                'common': '⚪', 'uncommon': '🟢', 'rare': '🔵',
+                'epic': '🟣', 'legendary': '🟡'
+            }.get(item['rarity'].lower(), '⚪')
+            embed.add_field(name="💎 الندرة", value=f"{rarity_emoji} {item['rarity']}", inline=True)
+        
+        if item.get('location'):
+            embed.add_field(name="📍 الموقع", value=item['location'], inline=True)
+        
+        if item.get('spawnRate') or item.get('spawn_rate'):
+            rate = item.get('spawnRate') or item.get('spawn_rate')
+            embed.add_field(name="📊 نسبة الظهور", value=f"{rate}%", inline=True)
+        
+        if item.get('price') or item.get('value'):
+            price = item.get('price') or item.get('value')
+            embed.add_field(name="💰 السعر", value=str(price), inline=True)
+        
+        # صورة العنصر
+        if item.get('image') or item.get('icon') or item.get('imageUrl'):
+            img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
+            if img_url and img_url.startswith('http'):
+                embed.set_thumbnail(url=img_url)
+        
+        embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
+        return embed
     
-    # ══════════════════════════════════════
-    # المستوى 3: ما لقينا شي
-    # ══════════════════════════════════════
-    
-    embed = discord.Embed(
-        title="🤔 ما فهمت السؤال",
-        description=(
-            f"ما لقيت معلومات عن: **{question}**\n\n"
-            "جرب تسألني عن:\n"
-            "• اسم قطعة (مثل: Rusted Gear)\n"
-            "• اسم ARC (مثل: Hunter)\n"
-            "• اسم خريطة (مثل: Dam)"
-        ),
-        color=discord.Color.orange()
-    )
-    return "", embed
-
-# ══════════════════════════════════════════════════════════════════
-#                         Embeds
-# ══════════════════════════════════════════════════════════════════
-
-def create_item_embed(item: dict) -> discord.Embed:
-    """إنشاء Embed للقطعة"""
-    
-    rarity_colors = {
-        'Common': discord.Color.light_grey(),
-        'Uncommon': discord.Color.green(),
-        'Rare': discord.Color.blue(),
-        'Epic': discord.Color.purple(),
-        'Legendary': discord.Color.gold()
-    }
-    
-    rarity = item.get('rarity', 'Common')
-    color = rarity_colors.get(rarity, discord.Color.blue())
-    
-    embed = discord.Embed(
-        title=f"📦 {item['name']['en']}",
-        color=color
-    )
-    
-    if 'description' in item:
-        desc = item['description'].get('en', '')[:300]
-        embed.description = desc
-    
-    info_parts = []
-    if 'type' in item:
-        info_parts.append(f"**النوع:** {item['type']}")
-    if 'rarity' in item:
-        rarity_emoji = {'Common': '⚪', 'Uncommon': '🟢', 'Rare': '🔵', 'Epic': '🟣', 'Legendary': '🟠'}
-        emoji = rarity_emoji.get(rarity, '⚪')
-        info_parts.append(f"**الندرة:** {emoji} {rarity}")
-    
-    if info_parts:
-        embed.add_field(name="📋 المعلومات", value="\n".join(info_parts), inline=False)
-    
-    stats_parts = []
-    if 'value' in item:
-        stats_parts.append(f"💰 {item['value']}")
-    if 'weightKg' in item:
-        stats_parts.append(f"⚖️ {item['weightKg']} kg")
-    
-    if stats_parts:
-        embed.add_field(name="📊 الإحصائيات", value=" | ".join(stats_parts), inline=False)
-    
-    if 'recipe' in item and item['recipe']:
-        recipe_text = "\n".join([f"• {r['itemId']}: x{r['quantity']}" for r in item['recipe'][:5]])
-        embed.add_field(name="🔧 الصناعة", value=recipe_text, inline=False)
-    
-    embed.set_footer(text=f"ID: {item['id']}")
-    return embed
-
-def create_arc_embed(arc: dict) -> discord.Embed:
-    """إنشاء Embed للـ ARC"""
-    
-    threat_colors = {
-        'Low': discord.Color.green(),
-        'Moderate': discord.Color.gold(),
-        'High': discord.Color.orange(),
-        'Critical': discord.Color.red(),
-        'Extreme': discord.Color.dark_red()
-    }
-    
-    threat = arc.get('threat', 'Moderate')
-    color = threat_colors.get(threat, discord.Color.blue())
-    
-    embed = discord.Embed(
-        title=f"🤖 {arc['name']}",
-        description=arc.get('description', '')[:400],
-        color=color
-    )
-    
-    embed.add_field(name="📋 النوع", value=arc.get('type', 'غير محدد'), inline=True)
-    embed.add_field(name="⚠️ التهديد", value=threat, inline=True)
-    
-    if 'weakness' in arc:
-        embed.add_field(name="🎯 نقطة الضعف", value=arc['weakness'], inline=False)
-    
-    xp_text = f"تدمير: {arc.get('destroyXp', 0)} | نهب: {arc.get('lootXp', 0)}"
-    embed.add_field(name="💰 XP", value=xp_text, inline=False)
-    
-    if 'maps' in arc and arc['maps']:
-        embed.add_field(name="🗺️ يظهر في", value=", ".join(arc['maps'][:5]), inline=False)
-    
-    if 'drops' in arc and arc['drops']:
-        drops_text = ", ".join(arc['drops'][:8])
-        embed.add_field(name="🎁 الغنائم", value=drops_text, inline=False)
-    
-    embed.set_footer(text=f"ID: {arc['id']}")
-    return embed
-
-def create_map_embed(map_data: dict) -> discord.Embed:
-    """إنشاء Embed للخريطة"""
-    
-    embed = discord.Embed(
-        title=f"🗺️ {map_data['name']['en']}",
-        color=discord.Color.green()
-    )
-    
-    if 'description' in map_data:
-        embed.description = map_data['description'].get('en', '')[:300]
-    
-    embed.set_footer(text=f"ID: {map_data['id']}")
-    return embed
-
-# ══════════════════════════════════════════════════════════════════
-#                    أحداث البوت (Events)
-# ══════════════════════════════════════════════════════════════════
-
-@bot.event
-async def on_ready():
-    """عند تشغيل البوت"""
-    print("═" * 50)
-    print(f"✅ البوت شغال: {bot.user.name}")
-    print(f"✅ ID: {bot.user.id}")
-    print(f"✅ السيرفر: {ALLOWED_GUILD_ID}")
-    print(f"✅ القناة: {ALLOWED_CHANNEL_ID}")
-    print("═" * 50)
-    
-    # إحصائيات الـ Cache
-    stats = smart_cache.get_stats()
-    print(f"💾 Cache Stats:")
-    print(f"   📚 أجوبة محفوظة: {stats['total_answers']}")
-    print(f"   💰 توفير: {stats['money_saved']}")
-    print("═" * 50)
-    
-    await bot.change_presence(
-        activity=discord.Activity(
-            type=discord.ActivityType.listening,
-            name="أسئلتكم | اكتب دليل"
+    @staticmethod
+    def stats_embed(db_stats: dict, ai_stats: dict, uptime: str) -> discord.Embed:
+        """إنشاء Embed للإحصائيات"""
+        embed = discord.Embed(
+            title="📊 إحصائيات دليل",
+            color=COLORS["info"],
+            timestamp=datetime.now()
         )
+        
+        # إحصائيات قاعدة البيانات
+        db_text = f"""
+📦 العناصر: **{db_stats['items']:,}**
+📜 المهام: **{db_stats['quests']:,}**
+🗺️ الخرائط: **{db_stats['maps']:,}**
+🏪 التجار: **{db_stats['traders']:,}**
+🔧 الورشة: **{db_stats['workshop']:,}**
+━━━━━━━━━━━━━━━
+📚 المجموع: **{db_stats['total']:,}**
+"""
+        embed.add_field(name="🗄️ قاعدة البيانات", value=db_text, inline=True)
+        
+        # إحصائيات AI
+        ai_text = f"""
+🧠 DeepSeek: **{ai_stats.get('deepseek', 0)}**
+⚡ Groq: **{ai_stats.get('groq', 0)}**
+🤖 OpenAI: **{ai_stats.get('openai', 0)}**
+🎭 Claude: **{ai_stats.get('anthropic', 0)}**
+🌐 Google: **{ai_stats.get('google', 0)}**
+"""
+        embed.add_field(name="🤖 استخدام AI", value=ai_text, inline=True)
+        
+        embed.add_field(name="⏱️ وقت التشغيل", value=uptime, inline=False)
+        embed.set_footer(text=f"🤖 {BOT_NAME} v{BOT_VERSION}")
+        
+        return embed
+
+# ═══════════════════════════════════════════════════════════════
+# البوت الرئيسي
+# ═══════════════════════════════════════════════════════════════
+
+class DaleelBot(commands.Bot):
+    """البوت الرئيسي"""
+    
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.guilds = True
+        intents.members = True
+        
+        super().__init__(
+            command_prefix='!',
+            intents=intents,
+            help_command=None
+        )
+        
+        # المكونات
+        self.database = DatabaseManager()
+        self.search_engine = None
+        self.ai_manager = AIManager()
+        self.context_manager = ContextManager()
+        self.anti_spam = AntiSpam()
+        
+        # الإحصائيات
+        self.start_time = None
+        self.questions_answered = 0
+        
+    async def setup_hook(self):
+        """إعداد البوت"""
+        # تحميل قاعدة البيانات
+        self.database.load_all()
+        self.search_engine = SearchEngine(self.database)
+        
+        # مزامنة الأوامر
+        try:
+            synced = await self.tree.sync()
+            logger.info(f"✅ تم مزامنة {len(synced)} أمر")
+        except Exception as e:
+            logger.error(f"خطأ في المزامنة: {e}")
+    
+    async def on_ready(self):
+        """عند جاهزية البوت"""
+        self.start_time = datetime.now()
+        
+        logger.info(f"""
+╔══════════════════════════════════════════════════════════════╗
+║                    ✅ البوت شغال!                             ║
+╠══════════════════════════════════════════════════════════════╣
+║  الاسم: {self.user.name}
+║  الـ ID: {self.user.id}
+║  السيرفرات: {len(self.guilds)}
+║  البيانات: {self.database.get_stats()['total']} عنصر
+╚══════════════════════════════════════════════════════════════╝
+        """)
+        
+        # إرسال رسالة للقناة
+        await self.send_startup_message()
+        
+        # تحديث الحالة
+        await self.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.watching,
+                name="أسئلتكم عن ARC Raiders"
+            )
+        )
+    
+    async def send_startup_message(self):
+        """إرسال رسالة بدء التشغيل"""
+        try:
+            channel = self.get_channel(LOG_CHANNEL_ID)
+            if channel:
+                embed = discord.Embed(
+                    title="🚀 البوت شغال!",
+                    description=f"""
+✅ **دليل** جاهز للخدمة!
+
+📊 **الإحصائيات:**
+• العناصر: {self.database.get_stats()['total']:,}
+• الحالة: متصل ✅
+
+⏰ **وقت التشغيل:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                    """,
+                    color=COLORS["success"],
+                    timestamp=datetime.now()
+                )
+                await channel.send(embed=embed)
+        except Exception as e:
+            logger.error(f"خطأ في إرسال رسالة البدء: {e}")
+    
+    def get_uptime(self) -> str:
+        """حساب وقت التشغيل"""
+        if not self.start_time:
+            return "غير معروف"
+        
+        delta = datetime.now() - self.start_time
+        hours, remainder = divmod(int(delta.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        return f"{hours} ساعة, {minutes} دقيقة, {seconds} ثانية"
+
+# إنشاء البوت
+bot = DaleelBot()
+
+# ═══════════════════════════════════════════════════════════════
+# الأوامر - Commands
+# ═══════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="help", description="عرض المساعدة")
+async def help_command(interaction: discord.Interaction):
+    """أمر المساعدة"""
+    embed = discord.Embed(
+        title="📖 مساعدة دليل",
+        description="أنا **دليل** - مساعدك الذكي لعالم ARC Raiders!",
+        color=COLORS["info"]
     )
     
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ تم مزامنة {len(synced)} أمر")
-    except Exception as e:
-        print(f"❌ خطأ في المزامنة: {e}")
+    embed.add_field(
+        name="💬 كيف تسألني؟",
+        value="اكتب سؤالك مباشرة في القناة وراح أجاوبك!",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📝 أمثلة أسئلة:",
+        value="""
+• `وين أحصل Rusted Gear؟`
+• `كيف أهزم الـ Queen؟`
+• `وش أفضل سلاح للمبتدئين؟`
+• `spawn rate للـ Ferro Handgun`
+        """,
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚡ الأوامر:",
+        value="""
+• `/help` - عرض المساعدة
+• `/stats` - إحصائيات البوت
+• `/search [كلمة]` - بحث في قاعدة البيانات
+        """,
+        inline=False
+    )
+    
+    embed.set_footer(text=f"🤖 {BOT_NAME} v{BOT_VERSION}")
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="stats", description="عرض إحصائيات البوت")
+async def stats_command(interaction: discord.Interaction):
+    """أمر الإحصائيات"""
+    embed = EmbedBuilder.stats_embed(
+        bot.database.get_stats(),
+        bot.ai_manager.usage_stats,
+        bot.get_uptime()
+    )
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="search", description="بحث في قاعدة البيانات")
+@app_commands.describe(query="كلمة البحث")
+async def search_command(interaction: discord.Interaction, query: str):
+    """أمر البحث"""
+    await interaction.response.defer()
+    
+    results = bot.search_engine.search(query, limit=5)
+    
+    if not results:
+        embed = EmbedBuilder.warning(
+            "لا نتائج",
+            f"ما لقيت نتائج لـ **{query}**\n\nجرب كلمات مختلفة!"
+        )
+        await interaction.followup.send(embed=embed)
+        return
+    
+    embed = discord.Embed(
+        title=f"🔍 نتائج البحث: {query}",
+        color=COLORS["info"],
+        timestamp=datetime.now()
+    )
+    
+    for i, result in enumerate(results, 1):
+        item = result['item']
+        name = item.get('name') or item.get('title') or item.get('displayName', 'Unknown')
+        score = int(result['score'] * 100)
+        category = item.get('category') or item.get('type', 'غير محدد')
+        
+        embed.add_field(
+            name=f"{i}. {name}",
+            value=f"📁 {category} | 🎯 تطابق: {score}%",
+            inline=False
+        )
+    
+    embed.set_footer(text=f"🤖 {BOT_NAME}")
+    await interaction.followup.send(embed=embed)
+
+# ═══════════════════════════════════════════════════════════════
+# معالجة الرسائل
+# ═══════════════════════════════════════════════════════════════
 
 @bot.event
 async def on_message(message: discord.Message):
     """معالجة الرسائل"""
     
+    # تجاهل البوتات
     if message.author.bot:
         return
     
+    # تجاهل الرسائل خارج السيرفر والقناة المحددة
     if message.guild and message.guild.id != ALLOWED_GUILD_ID:
         return
+    
     if message.channel.id != ALLOWED_CHANNEL_ID:
+        await bot.process_commands(message)
         return
     
-    if not is_bot_mentioned(message):
+    # ردود سريعة
+    quick_responses = {
+        'شكراً': 'العفو! 💚',
+        'شكرا': 'العفو! 💚',
+        'thanks': "You're welcome! 💚",
+        'ممتاز': 'سعيد إني ساعدتك! 😊',
+        'رائع': 'دائماً في الخدمة! 🎮',
+        'تمام': 'أي خدمة! 👍'
+    }
+    
+    msg_lower = message.content.lower().strip()
+    if msg_lower in quick_responses:
+        await message.reply(quick_responses[msg_lower])
         return
     
-    # Rate Limiting
-    allowed, wait_time = check_rate_limit(message.author.id)
+    # فحص السبام
+    allowed, wait_time = bot.anti_spam.check(message.author.id)
     if not allowed:
-        await message.reply(f"⏳ انتظر {wait_time} ثانية", delete_after=5)
-        return
-    
-    question = extract_question(message.content)
-    
-    if not question or len(question) < 2:
-        await message.reply(
-            "👋 أهلاً! أنا **دليل** - اسألني عن أي شي في ARC Raiders!\n"
-            "مثال: `دليل وين ألقى Rusted Gear؟`"
+        embed = EmbedBuilder.warning(
+            "انتظر قليلاً",
+            f"⏰ **الحد: 3 أسئلة/دقيقة**\n\nانتظر **{wait_time}** ثانية ثم جرب مرة أخرى!"
         )
+        await message.reply(embed=embed)
         return
     
-    async with message.channel.typing():
+    # تجاهل الرسائل القصيرة جداً
+    if len(message.content.strip()) < 3:
+        return
+    
+    # حقن السياق
+    question = bot.context_manager.inject_context(message.author.id, message.content)
+    
+    # البحث في قاعدة البيانات
+    results = bot.search_engine.search(question, limit=1)
+    
+    if results and results[0]['score'] > 0.5:
+        # وجدنا نتيجة جيدة!
+        result = results[0]
+        item = result['item']
+        
+        embed = EmbedBuilder.item_embed(item)
+        reply = await message.reply(embed=embed)
+        
+        # حفظ السياق
+        name = item.get('name') or item.get('title') or item.get('displayName', '')
+        bot.context_manager.set_context(message.author.id, name, item)
+        
+        # إضافة reactions
+        await reply.add_reaction('👍')
+        await reply.add_reaction('👎')
+        await reply.add_reaction('🐛')
+        
+        bot.questions_answered += 1
+    
+    elif results and results[0]['score'] > 0.3:
+        # نتيجة متوسطة - نعرض اقتراحات
+        suggestions = bot.search_engine.find_similar(question, limit=3)
+        
+        if suggestions:
+            suggestion_text = "\n".join([f"• {s}" for s in suggestions])
+            embed = EmbedBuilder.warning(
+                "هل تقصد..؟",
+                f"ما لقيت جواب دقيق، لكن هل تقصد:\n\n{suggestion_text}\n\n💡 جرب إعادة صياغة السؤال!"
+            )
+        else:
+            embed = EmbedBuilder.info(
+                "جاري البحث...",
+                "دقيقة واحدة، أبحث لك في الـ AI..."
+            )
+        
+        await message.reply(embed=embed)
+    
+    else:
+        # لا نتائج - نستخدم AI
+        thinking_msg = await message.reply("🤔 أبحث لك...")
+        
+        context = ""
+        user_context = bot.context_manager.get_context(message.author.id)
+        if user_context:
+            context = f"المستخدم كان يسأل عن: {user_context['item']}"
+        
+        ai_result = await bot.ai_manager.ask_ai(question, context)
+        
+        await thinking_msg.delete()
+        
+        if ai_result['success']:
+            embed = EmbedBuilder.success(
+                "جواب من AI",
+                ai_result['answer']
+            )
+            embed.set_footer(text=f"🤖 {BOT_NAME} | via {ai_result['provider']}")
+        else:
+            embed = EmbedBuilder.error(
+                "عذراً",
+                "ما قدرت ألقى جواب لسؤالك.\n\n💡 جرب صياغة السؤال بطريقة مختلفة!"
+            )
+        
+        reply = await message.reply(embed=embed)
+        await reply.add_reaction('👍')
+        await reply.add_reaction('👎')
+        await reply.add_reaction('🐛')
+
+@bot.event
+async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
+    """معالجة الـ Reactions"""
+    
+    if user.bot:
+        return
+    
+    if reaction.message.author != bot.user:
+        return
+    
+    emoji = str(reaction.emoji)
+    
+    if emoji == '🐛':
+        # بلاغ عن خطأ
         try:
-            text, embed = await process_question(question)
+            await user.send(
+                "🐛 **إبلاغ عن خطأ**\n\n"
+                "وش الخطأ اللي لاحظته؟\n"
+                "(اكتب رسالتك في الـ 60 ثانية القادمة)"
+            )
             
-            if text:
-                await message.reply(text, embed=embed)
-            else:
-                await message.reply(embed=embed)
+            def check(m):
+                return m.author == user and isinstance(m.channel, discord.DMChannel)
+            
+            try:
+                msg = await bot.wait_for('message', check=check, timeout=60.0)
                 
-        except Exception as e:
-            print(f"❌ خطأ: {e}")
-            await message.reply("😅 صار خطأ، جرب مرة ثانية!", delete_after=10)
-    
-    await bot.process_commands(message)
+                # إرسال البلاغ للقناة
+                log_channel = bot.get_channel(LOG_CHANNEL_ID)
+                if log_channel:
+                    embed = discord.Embed(
+                        title="🐛 بلاغ جديد",
+                        description=msg.content,
+                        color=COLORS["warning"],
+                        timestamp=datetime.now()
+                    )
+                    embed.add_field(name="من", value=user.mention)
+                    embed.add_field(name="الرسالة الأصلية", value=reaction.message.content[:200] if reaction.message.content else "Embed")
+                    await log_channel.send(embed=embed)
+                
+                await user.send("✅ شكراً! تم إرسال البلاغ للمشرفين.")
+                
+            except asyncio.TimeoutError:
+                await user.send("⏰ انتهى الوقت. جرب مرة أخرى.")
+                
+        except discord.Forbidden:
+            pass
 
-# ══════════════════════════════════════════════════════════════════
-#                    Slash Commands
-# ══════════════════════════════════════════════════════════════════
-
-@bot.tree.command(name="item", description="🔍 البحث عن قطعة")
-@app_commands.describe(name="اسم القطعة")
-async def item_command(interaction: discord.Interaction, name: str):
-    if interaction.channel_id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message(f"❌ استخدم في <#{ALLOWED_CHANNEL_ID}>", ephemeral=True)
-        return
-    
-    await interaction.response.defer()
-    results = search_items(name)
-    
-    if not results:
-        embed = discord.Embed(title="❌ ما لقيت", description=f"ما لقيت قطعة: **{name}**", color=discord.Color.red())
-        await interaction.followup.send(embed=embed)
-        return
-    
-    embed = create_item_embed(results[0])
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="arc", description="🤖 البحث عن ARC")
-@app_commands.describe(name="اسم الـ ARC")
-async def arc_command(interaction: discord.Interaction, name: str):
-    if interaction.channel_id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message(f"❌ استخدم في <#{ALLOWED_CHANNEL_ID}>", ephemeral=True)
-        return
-    
-    await interaction.response.defer()
-    results = search_arcs(name)
-    
-    if not results:
-        embed = discord.Embed(title="❌ ما لقيت", description=f"ما لقيت ARC: **{name}**", color=discord.Color.red())
-        await interaction.followup.send(embed=embed)
-        return
-    
-    embed = create_arc_embed(results[0])
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="help", description="📋 قائمة الأوامر")
-async def help_command(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="📋 دليل - مساعدك في ARC Raiders",
-        description="أنا بوت ذكي أساعدك في كل شي عن اللعبة!",
-        color=discord.Color.blue()
-    )
-    
-    embed.add_field(
-        name="💬 الطريقة السهلة",
-        value="اكتب **دليل** + سؤالك\nمثال: `دليل وين ألقى Rusted Gear؟`",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="🔍 أوامر البحث",
-        value="`/item [اسم]` - البحث عن قطعة\n`/arc [اسم]` - معلومات عن ARC\n`/stats` - إحصائيات البوت",
-        inline=False
-    )
-    
-    embed.set_footer(text="صنع بـ ❤️ لسيرفر ELITE-ZONE")
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="stats", description="📊 إحصائيات البوت")
-async def stats_command(interaction: discord.Interaction):
-    embed = discord.Embed(title="📊 إحصائيات دليل", color=discord.Color.purple())
-    
-    embed.add_field(name="📦 القطع", value=f"{len(ITEMS):,}", inline=True)
-    embed.add_field(name="🤖 ARCs", value=str(len(BOTS)), inline=True)
-    embed.add_field(name="🗺️ الخرائط", value=str(len(MAPS)), inline=True)
-    
-    # إحصائيات التوفير! 💰
-    cache_stats = smart_cache.get_stats()
-    embed.add_field(name="💾 أجوبة محفوظة", value=cache_stats['total_answers'], inline=True)
-    embed.add_field(name="✅ نسبة الـ Cache", value=cache_stats['hit_rate'], inline=True)
-    embed.add_field(name="💰 التوفير", value=cache_stats['money_saved'], inline=True)
-    
-    # حالة AI
-    ai_status = []
-    for name, key in API_KEYS.items():
-        status = "✅" if key else "❌"
-        ai_status.append(f"{status} {name.upper()}")
-    
-    embed.add_field(name="🧠 محركات AI", value="\n".join(ai_status), inline=False)
-    
-    await interaction.response.send_message(embed=embed)
-
-# ══════════════════════════════════════════════════════════════════
-#                         تشغيل البوت
-# ══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# التشغيل
+# ═══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    TOKEN = os.getenv('DISCORD_TOKEN')
+    if not DISCORD_TOKEN:
+        logger.error("❌ DISCORD_TOKEN غير موجود!")
+        exit(1)
     
-    if not TOKEN:
-        print("═" * 50)
-        print("❌ خطأ: DISCORD_TOKEN غير موجود!")
-        print("═" * 50)
-    else:
-        print("═" * 50)
-        print("🚀 جاري تشغيل بوت دليل...")
-        print("═" * 50)
-        
-        try:
-            bot.run(TOKEN)
-        except Exception as e:
-            print(f"❌ خطأ في التشغيل: {e}")
+    logger.info("🚀 جاري تشغيل البوت...")
+    bot.run(DISCORD_TOKEN)
