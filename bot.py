@@ -1005,7 +1005,13 @@ class EmbedBuilder:
         
         # لو dict (ترجمات متعددة)
         if isinstance(value, dict):
-            return value.get('en') or value.get('ar') or str(list(value.values())[0]) if value else None
+            if not value:
+                return None
+            primary = value.get('en') or value.get('ar')
+            if primary:
+                return primary
+            first = next(iter(value.values()), None)
+            return str(first) if first is not None else None
         
         # لو string أو رقم
         return str(value) if value else None
@@ -1017,6 +1023,14 @@ class EmbedBuilder:
         img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
         if img_url and isinstance(img_url, str) and img_url.startswith('http'):
             return img_url
+        
+        filename = item.get('imageFilename')
+        if filename and isinstance(filename, str):
+            if filename.startswith('http'):
+                return filename
+            if filename.startswith('/'):
+                filename = filename.lstrip('/')
+            return f"{IMAGES_BASE_URL}/{filename}"
         
         # ثانياً: بناء الرابط من الـ id
         item_id = item.get('id') or item.get('itemId') or item.get('slug')
