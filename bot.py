@@ -430,6 +430,33 @@ class SearchEngine:
         upgrade_keywords = ['تطوير', 'ترقية', 'upgrade', 'الى', 'لل', 'لـ', '4', 'iv', 'iii', 'ii', 'i']
         is_upgrade_question = any(keyword in query_normalized for keyword in upgrade_keywords)
         
+        # محاولة تصحيح اسم السلاح/العنصر الإنجليزي لو كان فيه خطأ بسيط (ANVEL -> ANVIL)
+        english_words = re.findall(r'[a-zA-Z]+', query)
+        if english_words:
+            main_word = max(english_words, key=len).lower()
+            best_item = None
+            best_score = 0.0
+            
+            for item in self.db.all_data:
+                if not isinstance(item, dict):
+                    continue
+                name = self.extract_name(item)
+                if not name or name == "غير معروف":
+                    continue
+                name_lower = name.lower()
+                sim = SequenceMatcher(None, main_word, name_lower).ratio()
+                if sim > best_score:
+                    best_score = sim
+                    best_item = item
+            
+            # لو في تشابه قوي جداً، نرجّح هذا العنصر مباشرة
+            if best_item and best_score >= 0.8:
+                return [{
+                    'item': best_item,
+                    'score': 1.0,
+                    'matched_field': 'name'
+                }]
+        
         results = []
         
         for item in self.db.all_data:
@@ -1120,6 +1147,24 @@ class EmbedBuilder:
         price = item.get('price') or item.get('value')
         if price:
             embed.add_field(name="💰 السعر", value=str(price), inline=True)
+
+        # وصفة التصنيع (Recipe)
+        recipe = item.get('recipe')
+        if isinstance(recipe, dict) and recipe:
+            parts = []
+            for res_id, amount in recipe.items():
+                resource_name = EmbedBuilder._find_resource_name(res_id, database_manager)
+                if resource_name:
+                    parts.append(f"{amount}x {resource_name}")
+                else:
+                    readable_name = str(res_id).replace('_', ' ').title()
+                    parts.append(f"{amount}x {readable_name}")
+            if parts:
+                embed.add_field(
+                    name="🧰 وصفة التصنيع",
+                    value="\n".join(parts),
+                    inline=False
+                )
 
         # تكلفة التطوير (Upgrade Cost)
         upgrade_cost = item.get('upgradeCost')
