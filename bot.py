@@ -1542,7 +1542,7 @@ async def on_message(message: discord.Message):
         await message.reply(embed=embed, delete_after=10)
         return
     
-    requires_prefix = True
+    requires_prefix = False
     if requires_prefix:
         is_reply_to_bot = False
         if message.reference:
@@ -1973,9 +1973,45 @@ async def on_message(message: discord.Message):
             translated_desc = None
             if description and description != 'لا يوجد وصف':
                 translated_desc = await bot.ai_manager.translate_to_arabic(description)
-            
-            embed = EmbedBuilder.item_embed(item, translated_desc)
-            
+
+            if is_obtain_question or is_location_question:
+                obtain_info = []
+                found_in = item.get('foundIn')
+                if found_in:
+                    obtain_info.append(f"📍 **المنطقة:** {found_in}")
+                location_field = item.get('location') or item.get('spawn_location') or item.get('map')
+                if location_field and location_field != found_in:
+                    if isinstance(location_field, dict):
+                        location_field = location_field.get('en') or location_field.get('ar') or list(location_field.values())[0]
+                    obtain_info.append(f"🗺️ **الموقع:** {location_field}")
+                spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
+                if spawn_rate:
+                    obtain_info.append(f"📊 **نسبة الظهور:** {spawn_rate}%")
+                craft_bench = item.get('craftBench')
+                recipe = item.get('recipe')
+                if craft_bench or (isinstance(recipe, dict) and recipe):
+                    if craft_bench:
+                        obtain_info.append(f"🔨 **التصنيع:** متاح في {craft_bench}")
+                    else:
+                        obtain_info.append("🔨 **التصنيع:** متاح (شوف تفاصيل الوصفة)")
+                drops_list = item.get('drops')
+                if isinstance(drops_list, list) and len(drops_list) > 0:
+                    obtain_info.append(f"💀 **يسقط من:** {len(drops_list)} عدو/بوس")
+                traders = item.get('traders') or item.get('soldBy')
+                if traders:
+                    obtain_info.append("💰 **التجار:** متوفر للشراء")
+                price = item.get('price') or item.get('value')
+                if price:
+                    obtain_info.append(f"💵 **السعر:** {price}")
+                if not obtain_info:
+                    obtain_info.append("⚠️ **معلومات المكان غير متوفرة في الداتا**")
+                    if translated_desc and translated_desc != 'لا يوجد وصف':
+                        obtain_info.append(f"\n📝 {translated_desc[:150]}")
+                custom_desc = "\n\n".join(obtain_info)
+                embed = EmbedBuilder.item_embed(item, custom_desc)
+            else:
+                embed = EmbedBuilder.item_embed(item, translated_desc)
+
             if is_crafting_question:
                 recipe = item.get('recipe')
                 if isinstance(recipe, dict) and recipe:
@@ -1987,9 +2023,6 @@ async def on_message(message: discord.Message):
                         lines.append(f"- {name}: {amount}")
                     if lines:
                         embed.add_field(name="مكونات التصنيع", value="\n".join(lines), inline=False)
-            
-            if is_obtain_question:
-                pass
             
             reply = await message.reply(embed=embed)
             
