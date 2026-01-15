@@ -209,11 +209,6 @@ def extract_intents(text: str) -> list:
 intents = extract_intents(text)
 intent = intents[0] if intents else "general"
 # ...existing code...
-# مثال استبدال:
-# if is_comparative_question(content):
-# يصبح:
-if "comparative" in extract_intents(content):
-# ...existing code...
 
 # روابط الصور من GitHub
 IMAGES_BASE_URL = "https://raw.githubusercontent.com/RaidTheory/arcraiders-data/main/images"
