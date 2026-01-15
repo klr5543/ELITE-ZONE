@@ -994,6 +994,44 @@ class EmbedBuilder:
         )
         embed.set_footer(text=f"🤖 {BOT_NAME}")
         return embed
+
+# ═══════════════════════════════════════════════════════════════
+# أزرار التقييم - Feedback Buttons
+# ═══════════════════════════════════════════════════════════════
+
+class FeedbackView(discord.ui.View):
+    def __init__(self, author_id: int, source_question: str, embed_title: str):
+        super().__init__(timeout=600)
+        self.author_id = author_id
+        self.source_question = source_question
+        self.embed_title = embed_title or ""
+    
+    async def _send_log(self, interaction: discord.Interaction, status: str):
+        try:
+            log_channel = bot.get_channel(LOG_CHANNEL_ID)
+            if log_channel:
+                await log_channel.send(
+                    f"📝 تقييم: {status}\n"
+                    f"👤 المرسل: <@{interaction.user.id}>\n"
+                    f"📦 العنوان: {self.embed_title}\n"
+                    f"🗨️ السؤال: {self.source_question}"
+                )
+        except Exception:
+            pass
+    
+    @discord.ui.button(label="إجابة صحيحة", style=discord.ButtonStyle.success, emoji="✅")
+    async def feedback_ok(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("تم تسجيل: إجابة صحيحة ✅", ephemeral=True)
+        await self._send_log(interaction, "صحيحة")
+    
+    @discord.ui.button(label="إجابة خاطئة", style=discord.ButtonStyle.danger, emoji="❌")
+    async def feedback_bad(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("تم تسجيل: إجابة خاطئة ❌ — أبلغنا الفريق.", ephemeral=True)
+        await self._send_log(interaction, "خاطئة")
+
+async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
+    view = FeedbackView(message.author.id, message.content, getattr(embed, "title", "") or "")
+    return await message.reply(embed=embed, view=view)
     
     @staticmethod
     def error(title: str, description: str) -> discord.Embed:
@@ -1724,8 +1762,7 @@ async def on_message(message: discord.Message):
                         value="\n".join(drop_lines),
                         inline=False
                     )
-            reply = await message.reply(embed=embed)
-            
+            reply = await reply_with_feedback(message, embed)
             if use_ai and (is_crafting_question or is_obtain_question or is_location_question):
                 ai_context_parts = []
                 name_for_ai = bot.search_engine.extract_name(item)
@@ -1749,8 +1786,7 @@ async def on_message(message: discord.Message):
                 )
             name = bot.search_engine.extract_name(item)
             bot.context_manager.set_context(message.author.id, name, item)
-            await reply.add_reaction('✅')
-            await reply.add_reaction('❌')
+            # الأزرار تغني عن ردود ✅❌
             bot.questions_answered += 1
             return
     
@@ -1812,9 +1848,7 @@ async def on_message(message: discord.Message):
                     choice = rn
                     reason = "ندرة أعلى" if rs>ls else ("سعر أعلى عادة أقوى" if rp>lp else ("تصنيع أبسط" if rrc<lrc else "تقارب، اختر حسب أسلوبك"))
                 embed.add_field(name="الرأي المختصر", value=f"أنصح بـ {choice} ({reason}).", inline=False)
-                reply = await message.reply(embed=embed)
-                await reply.add_reaction('✅')
-                await reply.add_reaction('❌')
+                reply = await reply_with_feedback(message, embed)
                 bot.context_manager.set_context(message.author.id, choice, left_item if choice==ln else right_item)
                 bot.questions_answered += 1
                 return
@@ -1924,9 +1958,7 @@ async def on_message(message: discord.Message):
                 "منطقة غير معروفة",
                 f"ما لقيت منطقة لوت باسم {zone_display} في الداتا."
             )
-        reply = await message.reply(embed=embed)
-        await reply.add_reaction('✅')
-        await reply.add_reaction('❌')
+        reply = await reply_with_feedback(message, embed)
         bot.context_manager.set_context(message.author.id, zone_display, None)
         bot.questions_answered += 1
         return
@@ -2046,8 +2078,7 @@ async def on_message(message: discord.Message):
                     if lines:
                         embed.add_field(name="مكونات التصنيع", value="\n".join(lines), inline=False)
             
-            reply = await message.reply(embed=embed)
-            
+            reply = await reply_with_feedback(message, embed)
             if is_obtain_question and gun_parts_family_query:
                 extra_results = []
                 for r in results[1:]:
@@ -2118,8 +2149,7 @@ async def on_message(message: discord.Message):
             name = bot.search_engine.extract_name(item)
             bot.context_manager.set_context(message.author.id, name, item)
             
-            await reply.add_reaction('✅')
-            await reply.add_reaction('❌')
+            # الأزرار تغني عن ردود ✅❌
             
             bot.questions_answered += 1
             return
@@ -2153,9 +2183,7 @@ async def on_message(message: discord.Message):
                 "هل تقصد..؟",
                 f"ما لقيت **{content}** بالضبط\n\nهل تقصد:\n{suggestion_text}"
             )
-            reply = await message.reply(embed=embed)
-            await reply.add_reaction('✅')
-            await reply.add_reaction('❌')
+            reply = await reply_with_feedback(message, embed)
             return
         if use_ai:
             await ask_ai_and_reply(message, question)
@@ -2404,9 +2432,7 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             "ما قدرت ألقى جواب.\n\n💡 جرب صياغة السؤال بطريقة مختلفة!"
         )
     
-    reply = await message.reply(embed=embed)
-    await reply.add_reaction('✅')
-    await reply.add_reaction('❌')
+    reply = await reply_with_feedback(message, embed)
 
 @bot.event
 async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
