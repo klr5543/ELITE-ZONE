@@ -1121,10 +1121,18 @@ class EmbedBuilder:
         if intent == 'loot':
             drops = item.get('drops') or []
             found_in = item.get('foundIn') or item.get('location')
+            # منطق ذكي: إذا القطعة صناعية أو ميكانيكية أو كهربائية أو من نوع common/uncommon/rare، اقترح مناطق صناعية
+            industrial_hint = False
+            type_str = (item.get('type') or '').lower()
+            rarity_str = (item.get('rarity') or '').lower()
+            if any(word in type_str for word in ['mechanical', 'electrical', 'industrial', 'component', 'parts']) or rarity_str in ['common', 'uncommon', 'rare']:
+                industrial_hint = True
             if drops:
                 text = f"يمكنك الحصول على {name} من: {', '.join(drops[:6])} وغيرها."
             elif found_in:
                 text = f"غالبًا تجد {name} في منطقة: {found_in}."
+            elif industrial_hint:
+                text = f"غالبًا تحصل على {name} من مناطق اللوت الصناعية مثل Industrial أو من صناديق الميكانيك أو عند الأعداء في المناطق الصناعية."
             elif name and name != 'غرض بدون اسم':
                 text = f"لا توجد معلومات كافية عن {name} في قاعدة البيانات. إذا عندك تفاصيل أو تجربة، شاركها مع المجتمع ليستفيد الجميع."
             else:
