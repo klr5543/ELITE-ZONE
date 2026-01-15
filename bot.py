@@ -161,74 +161,59 @@ ARABIC_TO_ENGLISH = {
 }
 
 
-def is_comparative_question(text: str) -> bool:
+# دالة تحليل السؤال وفهم السياق المركب (NLP أعمق)
+def extract_intents(text: str) -> list:
+    """
+    تستخرج قائمة intents من السؤال بناءً على كلمات مفتاحية وسياق لغوي مركب
+    """
+    intents = []
     lowered = text.lower()
-    tokens = [
-        " vs ",
-        "vs ",
-        " افضل ",
-        "أفضل",
-        "احسن",
-        "أحسن",
-        " or ",
-        " or",
-        "or ",
-        "ولا",
-        "مقارنة",
-        "better",
-        "best",
-    ]
-    return any(token in lowered for token in tokens)
+    # intent: مقارنة
+    if any(token in lowered for token in ["أفضل", "أقوى", "أحسن", "أسرع", "أرخص", "أكثر", "vs", "مقارنة", "يستحق", "ولا", "or", "better", "best"]):
+        intents.append("comparative")
+    # intent: استراتيجية
+    if any(token in lowered for token in ["استراتيجية", "strategy", "كيف العب", "كيف ألعب", "build", "بيلد", "طريقة اللعب", "نصائح", "أواجه", "أتعامل", "أفوز", "أهرب", "أقتل"]):
+        intents.append("strategy")
+    # intent: شرح/تعريف
+    if any(token in lowered for token in ["ليش", "لماذا", "why", "سبب", "اشرح", "شرح", "explain", "يعني", "معنى", "تعريف", "وش", "ايش"]):
+        intents.append("explanation")
+    # intent: بدائل/حلول
+    if any(token in lowered for token in ["بديل", "بدائل", "حل", "إذا ما لقيت", "ما حصلت", "ما عندي", "alternative"]):
+        intents.append("alternatives")
+    # intent: مستوى اللاعب
+    if any(token in lowered for token in ["مبتدئ", "محترف", "نصائح للمبتدئين", "نصائح للمحترفين", "مستوى"]):
+        intents.append("player_level")
+    # intent: ميتا/تحديثات
+    if any(token in lowered for token in ["ميتا", "meta", "تحديث", "باتش", "patch", "تغييرات", "أقوى حالياً"]):
+        intents.append("meta")
+    # intent: تجارب مجتمع
+    if any(token in lowered for token in ["مجتمع", "لاعبين", "تجارب", "وش رأيكم", "أفضل طريقة جربتوها"]):
+        intents.append("community")
+    # intent: عام
+    if not intents:
+        intents.append("general")
+    return intents
 
 
-def is_strategy_question(text: str) -> bool:
-    lowered = text.lower()
-    tokens = [
-        "استراتيجية",
-        "strategy",
-        "كيف العب",
-        "كيف ألعب",
-        "build",
-        "بيلد",
-        "meta",
-        "ميتا",
-        "طريقة اللعب",
-    ]
-    return any(token in lowered for token in tokens)
+# حذف الدوال القديمة:
+# def is_comparative_question(text: str) -> bool:
+# def is_strategy_question(text: str) -> bool:
+# def is_explanatory_question(text: str) -> bool:
+# def extract_intent(text: str) -> str:
+# واستبدال كل استخدامات extract_intent(text) بـ extract_intents(text)[0] أو extract_intents(text) حسب الحاجة
+# واستبدال كل if is_comparative_question(text): ... إلخ بمنطق يعتمد على extract_intents
 
-
-def is_explanatory_question(text: str) -> bool:
-    lowered = text.lower()
-    tokens = [
-        "ليش",
-        "لماذا",
-        "why",
-        "سبب",
-        "اشرح",
-        "شرح",
-        "explain",
-    ]
-    return any(token in lowered for token in tokens)
-
-
-def should_use_ai(text: str) -> bool:
-    if is_comparative_question(text):
-        return True
-    if is_strategy_question(text):
-        return True
-    if is_explanatory_question(text):
-        return True
-    return False
-
-
-def is_ai_configured() -> bool:
-    return any([
-        DEEPSEEK_API_KEY,
-        GROQ_API_KEY,
-        OPENAI_API_KEY,
-        ANTHROPIC_API_KEY,
-        GOOGLE_API_KEY,
-    ])
+# مثال استبدال:
+# intent = extract_intent(text)
+# يصبح:
+intents = extract_intents(text)
+intent = intents[0] if intents else "general"
+# ...existing code...
+# مثال استبدال:
+# if is_comparative_question(content):
+# يصبح:
+if "comparative" in extract_intents(content):
+# ...existing code...
 
 # روابط الصور من GitHub
 IMAGES_BASE_URL = "https://raw.githubusercontent.com/RaidTheory/arcraiders-data/main/images"
@@ -986,65 +971,80 @@ class EmbedBuilder:
     
     @staticmethod
     def success(title: str, description: str) -> discord.Embed:
-            if drops and name:
-                text = f"🔍 تحصل على {name} من: {', '.join(drops[:6])} وغيرها."
-            elif found_in := (item.get('foundIn') or item.get('location')):
-                if name:
-                    text = f"📦 {name} غالبًا تلقاه في: {found_in}."
-                else:
-                    text = f"📦 غرض بدون اسم غالبًا تلقاه في: {found_in}."
-            else:
-                text = "🔎 إذا ما لقيت مكان واضح، جرب تدور عليه في مناطق اللوت الصناعية أو اسأل مجتمع اللاعبين."
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=COLORS["success"],
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
     @staticmethod
     def error(title: str, description: str) -> discord.Embed:
         embed = discord.Embed(
-            if location:
-                if name:
-                    text = f"📍 موقع {name}: {location}."
-                else:
-                    text = f"📍 موقع غير محدد: {location}."
-            else:
-                text = "🔎 إذا ما لقيت مكان واضح، جرب تسأل مجتمع اللاعبين أو تدور عليه في أماكن اللوت الشائعة."
+            title=title,
+            description=description,
+            color=COLORS["error"],
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
     
     @staticmethod
     def warning(title: str, description: str) -> discord.Embed:
-            if isinstance(recipe, dict) and recipe:
-                parts = []
-                for k, v in recipe.items():
-                    parts.append(f"{v}× {k}")
-                body = '، '.join(parts)
-                text = f"🛠️ لتصنيع {name} تحتاج: {body}."
-            else:
-                bp = item.get('blueprint') or item.get('craftBench')
-                if bp:
-                    text = f"🛠️ {name} يتصنع في: {bp}."
-                else:
-                    text = f"🛠️ لا توجد معلومات تصنيع مفصّلة لهذا الغرض. جرب تسأل مجتمع اللاعبين عن وصفة التصنيع أو مكان الورشة المناسب."
+        embed = discord.Embed(
+            title=title,
             description=description,
             color=COLORS["info"],
             timestamp=datetime.now()
         )
         embed.set_footer(text=f"🤖 {BOT_NAME}")
         return embed
-                if intent == 'requirements':
-                    text = f"🛠️ متطلبات هذا الغرض غير واضحة. جرب تسأل مجتمع اللاعبين أو تراجع قائمة التصنيع في الورشة."
-                elif intent == 'definition':
-                    text = f"ℹ️ لا يوجد وصف دقيق لهذا الغرض. اسأل مجتمع اللاعبين عن فائدة أو استخداماته."
-                elif intent == 'location':
-                    text = f"📍 مكان هذا الغرض غير محدد. جرب تسأل مجتمع اللاعبين أو تدور عليه في أماكن اللوت الشائعة."
-                elif intent == 'loot':
-                    text = f"🔎 لا توجد معلومات كافية عن طريقة الحصول. جرب تدور عليه في مناطق اللوت الصناعية أو اسأل مجتمع اللاعبين عن تجاربهم."
-                else:
-                    rarity = item.get('rarity')
-                    itype = item.get('type')
-                    parts = []
-                    if itype:
-                        parts.append(str(itype))
-                    if rarity:
-                        parts.append(str(rarity))
-                    if parts:
-                        text = f"{name} — {' | '.join(parts)}"
-                    else:
+
+# دالة مستقلة لتوليد النص الذكي بناءً على البيانات والسياق
+def generate_item_response(item, name=None, drops=None, location=None, recipe=None, intent=None):
+    # منطق الردود الذكية هنا
+    if drops and name:
+        return f"🔍 تحصل على {name} من: {', '.join(drops[:6])} وغيرها."
+    elif location:
+        if name:
+            return f"📍 موقع {name}: {location}."
+        else:
+            return f"📍 موقع غير محدد: {location}."
+    elif found_in := (item.get('foundIn') or item.get('location')):
+        if name:
+            return f"📦 {name} غالبًا تلقاه في: {found_in}."
+        else:
+            return f"📦 غرض بدون اسم غالبًا تلقاه في: {found_in}."
+    elif isinstance(recipe, dict) and recipe:
+        parts = [f"{v}× {k}" for k, v in recipe.items()]
+        body = '، '.join(parts)
+        return f"🛠️ لتصنيع {name} تحتاج: {body}."
+    elif intent == 'requirements':
+        return "🛠️ متطلبات هذا الغرض غير واضحة. جرب تسأل مجتمع اللاعبين أو تراجع قائمة التصنيع في الورشة."
+    elif intent == 'definition':
+        return "ℹ️ لا يوجد وصف دقيق لهذا الغرض. اسأل مجتمع اللاعبين عن فائدة أو استخداماته."
+    elif intent == 'location':
+        return "📍 مكان هذا الغرض غير محدد. جرب تسأل مجتمع اللاعبين أو تدور عليه في أماكن اللوت الشائعة."
+    elif intent == 'loot':
+        return "🔎 لا توجد معلومات كافية عن طريقة الحصول. جرب تدور عليه في مناطق اللوت الصناعية أو اسأل مجتمع اللاعبين عن تجاربهم."
+    elif recipe:
+        bp = item.get('blueprint') or item.get('craftBench')
+        if bp:
+            return f"🛠️ {name} يتصنع في: {bp}."
+        else:
+            return "🛠️ لا توجد معلومات تصنيع مفصّلة لهذا الغرض. جرب تسأل مجتمع اللاعبين عن وصفة التصنيع أو مكان الورشة المناسب."
+    else:
+        rarity = item.get('rarity')
+        itype = item.get('type')
+        parts = []
+        if itype:
+            parts.append(str(itype))
+        if rarity:
+            parts.append(str(rarity))
+        if parts:
+            return f"{name} — {' | '.join(parts)}"
+        return "🔎 إذا ما لقيت مكان واضح، جرب تسأل مجتمع اللاعبين أو تدور عليه في أماكن اللوت الشائعة."
                         text = f"🔎 لا توجد معلومات كافية عن هذا الغرض. إذا عندك تجربة أو معلومة شاركها ليستفيد المجتمع."
     def get_image_url(item: dict) -> str:
         """الحصول على رابط صورة العنصر"""
@@ -1088,7 +1088,7 @@ class EmbedBuilder:
         """تنظيف الوصف من النصوص الروسية والشوائب"""
         if not text:
             return text
-        text = text.replace('запасية', 'احتياطية')
+        text = text.replace('запасные', 'احتياطية')
         return text
 
     @staticmethod
@@ -1841,7 +1841,7 @@ async def on_message(message: discord.Message):
                 translated_desc = await bot.ai_manager.translate_to_arabic(description)
             if is_obtain_question or is_location_question:
                 obtain_info = []
-                found_in = item.get('foundIn')
+                found_in = item.get('foundIn)
                 if found_in:
                     obtain_info.append(f"📍 المنطقة: {found_in}")
                 location_field = item.get('location') or item.get('spawn_location') or item.get('map')
@@ -1926,373 +1926,13 @@ async def on_message(message: discord.Message):
             bot.questions_answered += 1
             return
     
-    if is_comparative_question(content):
-        names = re.findall(r'[A-Za-z][A-Za-z ]+', content)
-        unique = []
-        for n in names:
-            nn = n.strip()
-            if nn and nn.lower() not in [x.lower() for x in unique]:
-                unique.append(nn)
-        if len(unique) >= 2:
-            left_name, right_name = unique[0], unique[1]
-            left_results = bot.search_engine.search(left_name, limit=1)
-            right_results = bot.search_engine.search(right_name, limit=1)
-            if left_results and right_results:
-                left_item = left_results[0]['item']
-                right_item = right_results[0]['item']
-                def summarize(it):
-                    n = bot.search_engine.extract_name(it)
-                    cat = EmbedBuilder.extract_field(it, 'category') or ''
-                    typ = EmbedBuilder.extract_field(it, 'type') or ''
-                    rar = EmbedBuilder.extract_field(it, 'rarity') or ''
-                    price = it.get('price') or it.get('value') or ''
-                    found = it.get('foundIn') or ''
-                    bench = it.get('craftBench') or ''
-                    recipe = it.get('recipe') if isinstance(it.get('recipe'), dict) else None
-                    rcount = len(recipe) if recipe else 0
-                    parts = []
-                    if cat: parts.append(f"الفئة: {cat}")
-                    if typ: parts.append(f"النوع: {typ}")
-                    if rar: parts.append(f"الندرة: {rar}")
-                    if price: parts.append(f"السعر: {price}")
-                    if found: parts.append(f"يوجد في: {found}")
-                    if bench: parts.append(f"يتصنع في: {bench}")
-                    if rcount: parts.append(f"تعقيد التصنيع: {rcount} جزء")
-                    return n, "\n".join(parts) if parts else "لا توجد بيانات كافية"
-                ln, ltext = summarize(left_item)
-                rn, rtext = summarize(right_item)
-                embed = discord.Embed(
-                    title=f"⚖️ مقارنة: {ln} vs {rn}",
-                    color=COLORS["info"],
-                    timestamp=datetime.now()
-                )
-                embed.add_field(name=ln, value=ltext, inline=True)
-                embed.add_field(name=rn, value=rtext, inline=True)
-                def rarity_score(r):
-                    m = {'common':1,'uncommon':2,'rare':3,'epic':4,'legendary':5}
-                    rv = str(r).lower()
-                    return m.get(rv, 0)
-                ls = rarity_score(EmbedBuilder.extract_field(left_item, 'rarity') or '')
-                rs = rarity_score(EmbedBuilder.extract_field(right_item, 'rarity') or '')
-                lp = left_item.get('price') or left_item.get('value') or 0
-                rp = right_item.get('price') or right_item.get('value') or 0
-                lrc = len(left_item.get('recipe')) if isinstance(left_item.get('recipe'), dict) else 0
-                rrc = len(right_item.get('recipe')) if isinstance(right_item.get('recipe'), dict) else 0
-                choice = ln
-                reason = "ندرة أعلى" if ls>rs else ("سعر أعلى عادة أقوى" if lp>rp else ("تصنيع أبسط" if lrc<rrc else "تقارب، اختر حسب أسلوبك"))
-                if rs>ls or (lp>rp and rs>=ls) or (rrc<lrc and rs>=ls):
-                    choice = rn
-                    reason = "ندرة أعلى" if rs>ls else ("سعر أعلى عادة أقوى" if rp>lp else ("تصنيع أبسط" if rrc<lrc else "تقارب، اختر حسب أسلوبك"))
-                embed.add_field(name="الرأي المختصر", value=f"أنصح بـ {choice} ({reason}).", inline=False)
-                reply = await reply_with_feedback(message, embed)
-                bot.context_manager.set_context(message.author.id, choice, left_item if choice==ln else right_item)
-                bot.questions_answered += 1
-                return
-
-    # تصحيح أخطاء إملائية شائعة
-    typo_corrections = {
-        'have': 'heavy',
-        'heve': 'heavy',
-        'hevy': 'heavy',
-        'ligh': 'light',
-        'lit': 'light',
-        'complx': 'complex',
-        'cmplex': 'complex'
-    }
-    
-    english_words = re.findall(r'[a-zA-Z_]+', content)
-    english_words_raw_lower = [w.lower() for w in english_words]
-    english_words_lower = [typo_corrections.get(w.lower(), w.lower()) for w in english_words]
-    search_query = question
-    main_word = None
-    if (is_crafting_question or is_location_question or is_obtain_question) and english_words_lower:
-        id_like = next((w for w in english_words_lower if '_' in w), None)
-        if id_like:
-            main_word = id_like
-            search_query = main_word
-        else:
-            query_words = {'spawn', 'rate', 'drop', 'drops', 'location', 'where', 'find', 'how', 'much', 'spawnrate'}
-            item_words = [w for w in english_words_lower if w not in query_words]
-            if item_words:
-                main_word = max(item_words, key=len)
-                search_query = main_word
-            else:
-                main_word = " ".join(english_words_lower)
-                search_query = main_word
-
-    zone_query = False
-    zone_name_lower = None
-    if english_words_lower:
-        if not hasattr(bot, "zone_names"):
-            zones = set()
-            for it in bot.database.items:
-                if isinstance(it, dict):
-                    fi = it.get('foundIn')
-                    if isinstance(fi, str):
-                        for part in fi.split(','):
-                            part = part.strip()
-                            if part:
-                                zones.add(part)
-            bot.zone_names = zones
-        zone_names_lower = {z.lower() for z in bot.zone_names}
-        for w in english_words_lower:
-            lw = w.lower()
-            if lw in zone_names_lower:
-                zone_name_lower = lw
-                break
-        if zone_name_lower:
-            other_words = [w.lower() for w in english_words_lower if w.lower() != zone_name_lower]
-            filler_words = {'zone', 'area', 'type', 'region'}
-            if not other_words or all(w in filler_words for w in other_words):
-                zone_query = True
-
-    if zone_query and not is_crafting_question and not is_obtain_question:
-        matched_items = []
-        for it in bot.database.items:
-            if not isinstance(it, dict):
-                continue
-            fi = it.get('foundIn')
-            if not isinstance(fi, str):
-                continue
-            parts = [p.strip().lower() for p in fi.split(',') if p.strip()]
-            if zone_name_lower in parts:
-                matched_items.append(it)
-        if matched_items:
-            matched_items_sorted = sorted(
-                matched_items,
-                key=lambda it: bot.search_engine.extract_name(it)
-            )
-            limited_items = matched_items_sorted[:10]
-            zone_display = next(
-                (z for z in getattr(bot, "zone_names", []) if z.lower() == zone_name_lower),
-                zone_name_lower.capitalize()
-            )
-            embed = discord.Embed(
-                title=f"🧭 منطقة اللوت: {zone_display}",
-                description=f"أمثلة على القطع التي تلقاها في منطقة {zone_display}:",
-                color=COLORS["info"],
-                timestamp=datetime.now()
-            )
-            lines = []
-            for it in limited_items:
-                name = bot.search_engine.extract_name(it)
-                rarity = EmbedBuilder.extract_field(it, 'rarity') or ''
-                text = name
-                if rarity:
-                    text = f"{name} ({rarity})"
-                lines.append(f"- {text}")
-            extra_count = len(matched_items_sorted) - len(limited_items)
-            if extra_count > 0:
-                lines.append(f"+ {extra_count} قطع أخرى في هذه المنطقة")
-            embed.add_field(
-                name="اللوت في المنطقة",
-                value="\n".join(lines),
-                inline=False
-            )
-        else:
-            zone_display = zone_name_lower.capitalize() if zone_name_lower else question
-            embed = EmbedBuilder.warning(
-                "منطقة غير معروفة (لم يتم تعريفها في الداتا)",
-                f"ما لقيت منطقة لوت باسم {zone_display} في الداتا."
-            )
-        reply = await reply_with_feedback(message, embed)
-        bot.context_manager.set_context(message.author.id, zone_display, None)
-        bot.questions_answered += 1
+    if is_queen_query:
+        embed = EmbedBuilder.warning(
+            "تلميح للملكة",
+            "يبدو أنك تسأل عن الـ Queen. تأكد أنك مستعد جيداً قبل المواجهة!\n\n🔗 [معلومات أكثر عن الـ Queen](https://arcraiders.com/wiki/Queen)"
+        )
+        await message.reply(embed=embed)
         return
-    
-    gun_parts_family_query = (
-        is_obtain_question
-        and 'gun' in english_words_lower
-        and 'parts' in english_words_lower
-        and not any(w in ['light', 'heavy', 'complex'] for w in english_words_raw_lower)
-    )
-    if gun_parts_family_query:
-        search_query = "gun parts"
-    
-    ai_configured = is_ai_configured()
-    use_ai = should_use_ai(question) and ai_configured
-    
-    results = bot.search_engine.search(search_query, limit=5 if (is_crafting_question or is_obtain_question or is_location_question) else 1)
-    
-    if is_crafting_question and results and not gun_parts_family_query:
-        recipe_candidates = []
-        for r in results:
-            item_candidate = r['item']
-            recipe_candidate = item_candidate.get('recipe') if isinstance(item_candidate, dict) else None
-            if isinstance(recipe_candidate, dict) and recipe_candidate:
-                recipe_candidates.append(r)
-        if recipe_candidates:
-            best = max(recipe_candidates, key=lambda x: x['score'])
-            results = [best]
-        else:
-            results = [results[0]]
-    
-    # تفضيل العنصر الأساسي على البلوبربنت في أسئلة الطرق/المكان
-    if (is_obtain_question or is_location_question) and results:
-        non_blueprints = [
-            r for r in results
-            if 'blueprint' not in bot.search_engine.extract_name(r['item']).lower()
-            and 'Blueprint' not in r['item'].get('type', '')
-        ]
-        if non_blueprints:
-            results = non_blueprints
-    
-    # عتبة المطابقة: أقل في أسئلة الدروب/المكان/التصنيع
-    match_threshold = 0.6
-    if is_crafting_question or is_obtain_question or is_location_question:
-        match_threshold = 0.3
-    
-    if results and results[0]['score'] > match_threshold:
-        result = results[0]
-        item = result['item']
-        
-        item_name = bot.search_engine.extract_name(item).lower()
-        
-        skip_result = False
-        if (not is_crafting_question and not is_obtain_question and not is_location_question) and english_words:
-            main_word = max(english_words, key=len).lower()
-            if len(main_word) > 3 and main_word not in item_name:
-                skip_result = True
-        
-        if not skip_result:
-            description = None
-            if 'description' in item:
-                desc_val = item['description']
-                if isinstance(desc_val, dict):
-                    description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-                else:
-                    description = str(desc_val)
-            
-            translated_desc = None
-            if description and description != 'لا يوجد وصف':
-                translated_desc = await bot.ai_manager.translate_to_arabic(description)
-
-            if is_obtain_question or is_location_question:
-                obtain_info = []
-                found_in = item.get('foundIn')
-                if found_in:
-                    obtain_info.append(f"📍 **المنطقة:** {found_in}")
-                location_field = item.get('location') or item.get('spawn_location') or item.get('map')
-                if location_field and location_field != found_in:
-                    if isinstance(location_field, dict):
-                        location_field = location_field.get('en') or location_field.get('ar') or list(location_field.values())[0]
-                    obtain_info.append(f"🗺️ **الموقع:** {location_field}")
-                spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
-                if spawn_rate:
-                    obtain_info.append(f"📊 **نسبة الظهور:** {spawn_rate}%")
-                craft_bench = item.get('craftBench')
-                recipe = item.get('recipe')
-                if craft_bench or (isinstance(recipe, dict) and recipe):
-                    if craft_bench:
-                        obtain_info.append(f"🔨 **التصنيع:** متاح في {craft_bench}")
-                    else:
-                        obtain_info.append("🔨 **التصنيع:** متاح (شوف تفاصيل الوصفة)")
-                drops_list = item.get('drops')
-                if isinstance(drops_list, list) and len(drops_list) > 0:
-                    obtain_info.append(f"💀 **يسقط من:** {len(drops_list)} عدو/بوس")
-                traders = item.get('traders') or item.get('soldBy')
-                if traders:
-                    obtain_info.append("💰 **التجار:** متوفر للشراء")
-                price = item.get('price') or item.get('value')
-                if price:
-                    obtain_info.append(f"💵 **السعر:** {price}")
-                if not obtain_info:
-                    obtain_info.append("⚠️ **معلومات المكان غير متوفرة في الداتا**")
-                    if translated_desc and translated_desc != 'لا يوجد وصف':
-                        obtain_info.append(f"\n📝 {translated_desc[:150]}")
-                custom_desc = "\n\n".join(obtain_info)
-                intent = 'loot' if is_obtain_question else 'location' if is_location_question else None
-                embed = EmbedBuilder.concise_item_response(item, intent=intent)
-            else:
-                embed = EmbedBuilder.concise_item_response(item, intent=None)
-
-            if is_crafting_question:
-                recipe = item.get('recipe')
-                if isinstance(recipe, dict) and recipe:
-                    lines = []
-                    for key, amount in recipe.items():
-                        if amount is None:
-                            continue
-                        name = str(key).replace('_', ' ')
-                        lines.append(f"- {name}: {amount}")
-                    if lines:
-                        embed.add_field(name="مكونات التصنيع", value="\n".join(lines), inline=False)
-            
-            reply = await reply_with_feedback(message, embed)
-            if is_obtain_question and gun_parts_family_query:
-                extra_results = []
-                for r in results[1:]:
-                    extra_item = r['item']
-                    extra_name = bot.search_engine.extract_name(extra_item).lower()
-                    if 'gun parts' in extra_name:
-                        extra_results.append(extra_item)
-                for extra_item in extra_results:
-                    extra_description = None
-                    if 'description' in extra_item:
-                        desc_val = extra_item['description']
-                        if isinstance(desc_val, dict):
-                            extra_description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-                        else:
-                            extra_description = str(desc_val)
-                    extra_translated_desc = None
-                    if extra_description and extra_description != 'لا يوجد وصف':
-                        extra_translated_desc = await bot.ai_manager.translate_to_arabic(extra_description)
-                    extra_embed = EmbedBuilder.concise_item_response(extra_item, intent='loot')
-                    extra_obtain_lines = []
-                    found_in_extra = extra_item.get('foundIn')
-                    if found_in_extra:
-                        extra_obtain_lines.append(f"- يوجد في: {found_in_extra}")
-                    craft_bench_extra = extra_item.get('craftBench')
-                    if craft_bench_extra:
-                        extra_obtain_lines.append(f"- يتصنع في: {craft_bench_extra}")
-                    if not is_crafting_question:
-                        recipe_extra = extra_item.get('recipe')
-                        if isinstance(recipe_extra, dict) and recipe_extra:
-                            extra_obtain_lines.append("- له وصفة تصنيع، شوف تفاصيل التصنيع")
-                    if extra_obtain_lines:
-                        extra_embed.add_field(
-                            name="طرق الحصول",
-                            value="\n".join(extra_obtain_lines),
-                            inline=False
-                        )
-                    await message.channel.send(embed=extra_embed)
-            
-            if is_location_question:
-                location = item.get('location') or item.get('spawn_location') or item.get('map')
-                if location:
-                    if isinstance(location, dict):
-                        location = location.get('en') or list(location.values())[0]
-                    
-                    map_embed = EmbedBuilder.map_embed(str(location), item)
-                    await message.channel.send(embed=map_embed)
-            
-            if use_ai:
-                ai_context_parts = []
-                # إضافة العنصر الأساسي
-                name_for_ai = bot.search_engine.extract_name(item)
-                ai_context_parts.append(f"الآيتم الأساسي: {name_for_ai}")
-                
-                # لو كان بحث عائلة أسلحة، نضيف الباقين للسياق
-                if is_obtain_question and gun_parts_family_query:
-                     ai_context_parts.append("تنبيه: تم عرض عائلة Gun Parts كاملة (Light, Heavy, Complex).")
-
-                ai_context_parts.append("تنبيه للنظام: المستخدم رأى بطاقة المعلومات الرسمية (الندرة، السعر، الوصف، الموقع، الكرافت).")
-                ai_context_parts.append("مهم: لا تكرر هذه المعلومات أبداً. لا تضع قوائم.")
-                ai_context_parts.append("المطلوب: قدم نصيحة استراتيجية ذكية ومختصرة (سطرين) فقط إذا كان هناك فائدة إضافية غير موجودة في الداتا.")
-                
-                ai_context = " | ".join(ai_context_parts)
-                await ask_ai_and_reply(
-                    message,
-                    f"{ai_context}\n\nسؤال اللاعب: {question}"
-                )
-
-            name = bot.search_engine.extract_name(item)
-            bot.context_manager.set_context(message.author.id, name, item)
-            
-            # الأزرار تغني عن ردود ✅❌
-            
-            bot.questions_answered += 1
-            return
     
     if (is_obtain_question or is_location_question or is_crafting_question) and (not results or results[0]['score'] <= match_threshold):
         if ai_configured:
@@ -2344,290 +1984,4 @@ async def on_message(message: discord.Message):
         "ما قدرت ألقى شيء واضح في داتا ARC Raiders يطابق سؤالك.\nجرّب تغير صياغة السؤال أو تكتب اسم الآيتم مباشرة."
     )
     await message.reply(embed=embed)
-
-
-async def ask_ai_and_reply(message: discord.Message, question: str):
-    thinking_msg = await message.reply("🔍 أبحث لك...")
-    
-    context = ""
-    user_context = bot.context_manager.get_context(message.author.id)
-    if user_context:
-        context = f"المستخدم كان يسأل عن: {user_context['item']}"
-    
-    q_lower = question.lower()
-    
-    expedition_keywords = [
-        'expedition project',
-        'expedition',
-        'البروجيكت',
-        'البروجكت',
-        'بروجيكت الاكسبديشن',
-        'بروجكت الاكسبديشن',
-        'بروجيكت الإكسبيديشن',
-        'بروجكت الإكسبيديشن'
-    ]
-    if any(k in q_lower for k in expedition_keywords):
-        expedition_context = (
-            "معلومة رسمية عن Expedition Project في ARC Raiders: "
-            "ينفتح عند ليفل 20 كنظام يعيد تقدم الرايدر بشكل اختياري. "
-            "كل دورة تستمر ثمانية أسابيع؛ سبعة أسابيع للتحضير والأسبوع الثامن لإنهاء البروجيكت. "
-            "يعيد الليفل والمهارات والـ XP والإنفنتوري وتقدم التصنيع، "
-            "ويحافظ على الكوزمِتكس والمشتريات وRaider Tokens وCred وتقدم Raider Decks والكودكس والخرائط "
-            "وبونسات الإكسبيديشن من الرنات السابقة. "
-            "إنهاء البروجيكت يعطي جوائز تجميلية دائمة وبفات حساب للمواسم التالية."
-        )
-        if context:
-            context = context + " | " + expedition_context
-        else:
-            context = expedition_context
-    
-    game_info_keywords = [
-        'arc raiders',
-        'arc raider',
-        'اركرين',
-        'آرك ريدرز',
-        'عن اللعبة',
-        'وش هي arc raiders',
-        'ما هي arc raiders'
-    ]
-    if any(k in q_lower for k in game_info_keywords):
-        game_info_context = (
-            "ARC Raiders هي لعبة مغامرات استخراج جماعية تدور على أرض مستقبلية مدمرة، "
-            "تواجه فيها البشرية قوة ميكانيكية غامضة اسمها ARC. "
-            "تلعب كرائدر يطلع لسطح الأرض لجمع الموارد وإنهاء المهمات والرجوع سالماً بالغنائم، "
-            "مع إمكانية التعاون أو التنافس مع ريدرز آخرين."
-        )
-        if context:
-            context = context + " | " + game_info_context
-        else:
-            context = game_info_context
-    
-    arc_force_keywords = [
-        'arc نفسها',
-        'قوة arc',
-        'آرك نفسها',
-        'الآرك',
-        'arc machines'
-    ]
-    if any(k in q_lower for k in arc_force_keywords):
-        arc_force_context = (
-            "ARC هي قوة ميكانيكية غامضة دمّرت العالم، "
-            "تتضمن آليّات صغيرة مثل Ticks وSnitches وصولاً إلى زعماء كبار من نوع Queens."
-        )
-        if context:
-            context = context + " | " + arc_force_context
-        else:
-            context = arc_force_context
-    
-    speranza_keywords = [
-        'speranza',
-        'سبيرانزا',
-        'سبرنزا',
-        'المدينة تحت الأرض',
-        'الملجأ'
-    ]
-    if any(k in q_lower for k in speranza_keywords):
-        speranza_context = (
-            "Speranza هي مستوطنة تحت الأرض تعتبر مركز آمن للبشر بعيداً عن تهديد ARC على السطح، "
-            "وفيها ترجع بعد المهمات لتستلم المكافآت وتتعامل مع التجار وتطوّر شخصيتك ومساحتك الخاصة."
-        )
-        if context:
-            context = context + " | " + speranza_context
-        else:
-            context = speranza_context
-    
-    workshop_keywords = [
-        'workshop',
-        'الوركشوب',
-        'الورشة',
-        'ورشة التصنيع',
-        'تطوير الاسلحة',
-        'ترقية الاسلحة'
-    ]
-    if any(k in q_lower for k in workshop_keywords):
-        workshop_context = (
-            "الـ Workshop هو المكان اللي تطور فيه العتاد والأسلحة، "
-            "وتصلحها وتفتح وصفات تصنيع جديدة. "
-            "تقدر بعد تطور الورشة نفسها عشان تفتح تجهيزات وأدوات أقوى."
-        )
-        if context:
-            context = context + " | " + workshop_context
-        else:
-            context = workshop_context
-    
-    traders_keywords = [
-        'traders',
-        'trader',
-        'التجار',
-        'تاجر',
-        'التاجر'
-    ]
-    if any(k in q_lower for k in traders_keywords):
-        traders_context = (
-            "التُجّار في Speranza شخصيات مهمة يقدمون مهمات تحكي قصص من الـ Rust Belt، "
-            "ويعطونك مكافآت على مساعدتهم، بالإضافة لبيع وشراء الأغراض منك."
-        )
-        if context:
-            context = context + " | " + traders_context
-        else:
-            context = traders_context
-    
-    scrappy_keywords = [
-        'scrappy',
-        'الديك',
-        'ديكي',
-        'rooster',
-        'الديك المساعد'
-    ]
-    if any(k in q_lower for k in scrappy_keywords):
-        scrappy_context = (
-            "Scrappy هو رفيقك الديك اللي يساعدك يجمع الأغراض، "
-            "وله سلوك أنه يلقط اللوت لك حتى لو خسرت، "
-            "وتقدر تدربه وتعطيه كوزمِتكس خاصة فيه."
-        )
-        if context:
-            context = context + " | " + scrappy_context
-        else:
-            context = scrappy_context
-    
-    rust_belt_keywords = [
-        'rust belt',
-        'دام باتلجراوندز',
-        'dam battlegrounds',
-        'buried city',
-        'spaceport',
-        'blue gate',
-        'stella montis'
-    ]
-    if any(k in q_lower for k in rust_belt_keywords):
-        rust_belt_context = (
-            "مناطق الاستكشاف اسمها Rust Belt، "
-            "وتشمل Dam Battlegrounds (غابات ومستَنقعات ومرافق أبحاث)، "
-            "وBuried City (مدينة منهارة مغطاة بالرمل)، "
-            "وSpaceport (منشأة إطلاق قديمة)، "
-            "وBlue Gate (جبال وأنفاق ومدن ومجمعات تحت الأرض). "
-            "وفيه إشاعة عن منطقة اسمها Stella Montis لكن الوصول لها غير محدد أو موثق في الداتا."
-        )
-        if context:
-            context = context + " | " + rust_belt_context
-        else:
-            context = rust_belt_context
-    
-    specs_keywords = [
-        'متطلبات التشغيل',
-        'متطلبات اللعبة',
-        'المواصفات المطلوبة',
-        'specs',
-        'requirements',
-        'minimum specs',
-        'recommended specs'
-    ]
-    if any(k in q_lower for k in specs_keywords):
-        specs_context = (
-            "متطلبات ARC Raiders على البي سي: "
-            "الحد الأدنى تقريباً Windows 10 64-bit مع معالج i5-6600K أو Ryzen 5 1600، "
-            "و12GB رام وكرت مثل GTX 1050 Ti أو RX 580، وDirectX 12. "
-            "الموصى به i5-9600K أو Ryzen 5 3600، و16GB رام، "
-            "وكرت مثل RTX 2070 أو RX 5700 XT."
-        )
-        if context:
-            context = context + " | " + specs_context
-        else:
-            context = specs_context
-    
-    ping_keywords = [
-        'ping system',
-        'البنق',
-        'البينق',
-        'ping',
-        'نظام البينق',
-        'نظام العلامات',
-        'كيف أعلِّم على الأعداء',
-        'مارك'
-    ]
-    if any(k in q_lower for k in ping_keywords):
-        ping_context = (
-            "نظام الـ Ping يسمح لك تعلم على اللاعبين أو ARC أو الأغراض أو المواقع، "
-            "باستخدام زر الماوس الأوسط على البي سي، أو R1/RT على البلايستيشن والإكس بوكس، "
-            "وتقدر تعدّل الأزرار من الإعدادات."
-        )
-        if context:
-            context = context + " | " + ping_context
-        else:
-            context = ping_context
-    
-    ai_result = await bot.ai_manager.ask_ai(question, context)
-    
-    await thinking_msg.delete()
-    
-    if ai_result['success']:
-        embed = EmbedBuilder.success(
-            "جواب من AI",
-            ai_result['answer']
-        )
-        embed.set_footer(text=f"via {ai_result['provider']} • 🤖 {BOT_NAME}")
-    else:
-        embed = EmbedBuilder.error(
-            "عذراً",
-            "ما قدرت ألقى جواب.\n\n💡 جرب صياغة السؤال بطريقة مختلفة!"
-        )
-    
-    reply = await reply_with_feedback(message, embed)
-
-@bot.event
-async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
-    """معالجة الـ Reactions - تسجيل التقييمات"""
-    
-    if user.bot:
-        return
-    
-    if reaction.message.author != bot.user:
-        return
-    
-    emoji = str(reaction.emoji)
-    
-    # تسجيل في اللوق
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    
-    if emoji == '❌' and log_channel:
-        # إجابة خاطئة - نسجل في اللوق
-        embed = discord.Embed(
-            title="❌ تقييم: إجابة خاطئة",
-            color=COLORS["error"],
-            timestamp=datetime.now()
-        )
-        
-        # محتوى الرسالة الأصلية
-        original_content = ""
-        if reaction.message.embeds:
-            original_embed = reaction.message.embeds[0]
-            original_content = f"**{original_embed.title}**\n{original_embed.description[:200] if original_embed.description else ''}"
-        
-        embed.add_field(name="👤 من", value=user.mention, inline=True)
-        embed.add_field(name="📝 الرد", value=original_content[:500] or "Embed", inline=False)
-        
-        # السؤال الأصلي (الرسالة اللي رد عليها البوت)
-        if reaction.message.reference:
-            try:
-                original_msg = await reaction.message.channel.fetch_message(reaction.message.reference.message_id)
-                embed.add_field(name="❓ السؤال", value=original_msg.content[:200], inline=False)
-            except:
-                pass
-        
-        await log_channel.send(embed=embed)
-    
-    elif emoji == '✅':
-        # إجابة صحيحة - ممكن نسجلها للإحصائيات
-        pass
-
-# ═══════════════════════════════════════════════════════════════
-# التشغيل
-# ═══════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        logger.error("❌ DISCORD_TOKEN غير موجود!")
-        exit(1)
-    
-    logger.info("🚀 جاري تشغيل البوت...")
-    bot.run(DISCORD_TOKEN)
+``
