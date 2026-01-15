@@ -1523,75 +1523,80 @@ async def search_command(interaction: discord.Interaction, query: str):
 @bot.event
 async def on_message(message: discord.Message):
     """معالجة الرسائل"""
-    
-    # تجاهل البوتات
-    if message.author.bot:
-        return
-    
-    # تجاهل الرسائل خارج السيرفر والقناة المحددة
-    if message.guild and message.guild.id != ALLOWED_GUILD_ID:
-        return
-    
-    if message.channel.id != ALLOWED_CHANNEL_ID:
-        await bot.process_commands(message)
-        return
-    
-    # تنظيف الرسالة
-    content = message.content.strip()
-    content_lower = content.lower()
-    
-    # كلمات نتجاهلها (اسم البوت، تحيات قصيرة، إلخ)
-    ignore_words = [
-        'دليل', 'daleel', 'bot', 'بوت',
-        'هاي', 'hi', 'hello', 'مرحبا', 'السلام',
-        'هلا', 'اهلا', 'hey', 'yo'
-    ]
-    
-    # تجاهل الرسائل القصيرة جداً أو اللي هي بس اسم البوت
-    if len(content) < 5 or content_lower in ignore_words:
-        return
-    
-    # إزالة اسم البوت من بداية الرسالة لو موجود
-    for word in ['دليل', 'daleel']:
-        if content_lower.startswith(word):
-            content = content[len(word):].strip()
-            break
-    
-    # لو بعد الإزالة صارت فاضية أو قصيرة جداً
-    if len(content) < 3:
-        return
-    
-    # ردود سريعة
-    quick_responses = {
-        'شكراً': 'العفو! 💚',
-        'شكرا': 'العفو! 💚',
-        'thanks': "You're welcome! 💚",
-        'thank you': "You're welcome! 💚",
-        'ممتاز': 'سعيد إني ساعدتك! 😊',
-        'رائع': 'دائماً في الخدمة! 🎮',
-        'تمام': 'أي خدمة! 👍',
-        'حلو': 'شكراً! 😊',
-        'good': 'Thanks! 😊'
-    }
-    
-    if content_lower in quick_responses:
-        await message.reply(quick_responses[content_lower])
-        return
-    
-    # فحص السبام
-    allowed, wait_time = bot.anti_spam.check(message.author.id)
-    if not allowed:
-        embed = EmbedBuilder.warning(
-            "انتظر قليلاً",
-            f"⏰ انتظر **{wait_time}** ثانية"
-        )
-        await message.reply(embed=embed, delete_after=10)
-        return
-    
-    requires_prefix = False
-    if requires_prefix:
-        is_reply_to_bot = False
-        if message.reference:
+    try:
+        if message.author.bot:
+            return
+        
+        if message.guild and message.guild.id != ALLOWED_GUILD_ID:
+            return
+        
+        if message.channel.id != ALLOWED_CHANNEL_ID:
+            await bot.process_commands(message)
+            return
+        
+        content = message.content.strip()
+        content_lower = content.lower()
+        
+        ignore_words = [
+            'دليل', 'daleel', 'bot', 'بوت',
+            'هاي', 'hi', 'hello', 'مرحبا', 'السلام',
+            'هلا', 'اهلا', 'hey', 'yo'
+        ]
+        
+        if len(content) < 5 or content_lower in ignore_words:
+            return
+        
+        for word in ['دليل', 'daleel']:
+            if content_lower.startswith(word):
+                content = content[len(word):].strip()
+                break
+        
+        if len(content) < 3:
+            return
+        
+        quick_responses = {
+            'شكراً': 'العفو! 💚',
+            'شكرا': 'العفو! 💚',
+            'thanks': "You're welcome! 💚",
+            'thank you': "You're welcome! 💚",
+            'ممتاز': 'سعيد إني ساعدتك! 😊',
+            'رائع': 'دائماً في الخدمة! 🎮',
+            'تمام': 'أي خدمة! 👍',
+            'حلو': 'شكراً! 😊',
+            'good': 'Thanks! 😊'
+        }
+        
+        if content_lower in quick_responses:
+            await message.reply(quick_responses[content_lower])
+            return
+        
+        allowed, wait_time = bot.anti_spam.check(message.author.id)
+        if not allowed:
+            embed = EmbedBuilder.warning(
+                "انتظر قليلاً",
+                f"⏰ انتظر **{wait_time}** ثانية"
+            )
+            await message.reply(embed=embed, delete_after=10)
+            return
+        
+        requires_prefix = False
+        if requires_prefix:
+            is_reply_to_bot = False
+            if message.reference:
+                ref_msg = getattr(message.reference, 'resolved', None)
+                if not ref_msg and getattr(message.reference, 'message_id', None):
+                    try:
+                        ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                    except Exception:
+                        ref_msg = None
+                if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
+                    is_reply_to_bot = True
+            if not (content_lower.startswith('دليل') or content_lower.startswith('daleel') or (bot.user in message.mentions) or is_reply_to_bot):
+                await bot.process_commands(message)
+                return
+        
+        user_ctx = bot.context_manager.get_context(message.author.id)
+        if not user_ctx and message.reference:
             ref_msg = getattr(message.reference, 'resolved', None)
             if not ref_msg and getattr(message.reference, 'message_id', None):
                 try:
@@ -1599,64 +1604,60 @@ async def on_message(message: discord.Message):
                 except Exception:
                     ref_msg = None
             if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
-                is_reply_to_bot = True
-        if not (content_lower.startswith('دليل') or content_lower.startswith('daleel') or (bot.user in message.mentions) or is_reply_to_bot):
-            await bot.process_commands(message)
-            return
-    
-    user_ctx = bot.context_manager.get_context(message.author.id)
-    if not user_ctx and message.reference:
-        ref_msg = getattr(message.reference, 'resolved', None)
-        if not ref_msg and getattr(message.reference, 'message_id', None):
-            try:
-                ref_msg = await message.channel.fetch_message(message.reference.message_id)
-            except Exception:
-                ref_msg = None
-        if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
-            ref_embeds = getattr(ref_msg, 'embeds', []) or []
-            ref_title = ref_embeds[0].title if ref_embeds else None
-            if ref_title:
-                t = ref_title.strip()
-                if t.startswith("🧭 منطقة اللوت: "):
-                    zone_display = t.split(": ", 1)[1].strip()
-                    bot.context_manager.set_context(message.author.id, zone_display, None)
-                elif t.startswith("🗺️ خريطة: "):
-                    map_name = t.split(": ", 1)[1].strip()
-                    bot.context_manager.set_context(message.author.id, map_name, None)
-                elif t.startswith("📦 "):
-                    item_name = t[2:].strip()
-                    bot.context_manager.set_context(message.author.id, item_name, None)
-                elif t.startswith("⚖️ مقارنة: "):
-                    comp_part = t.split(": ", 1)[1].strip()
-                    left_name = comp_part.split(" vs ", 1)[0].strip() if " vs " in comp_part else comp_part
-                    if left_name:
-                        bot.context_manager.set_context(message.author.id, left_name, None)
-                else:
-                    guess_results = bot.search_engine.search(t, limit=1)
-                    if guess_results:
-                        gitem = guess_results[0]['item']
-                        gname = bot.search_engine.extract_name(gitem)
-                        bot.context_manager.set_context(message.author.id, gname, gitem)
+                ref_embeds = getattr(ref_msg, 'embeds', []) or []
+                ref_title = ref_embeds[0].title if ref_embeds else None
+                if ref_title:
+                    t = ref_title.strip()
+                    if t.startswith("🧭 منطقة اللوت: "):
+                        zone_display = t.split(": ", 1)[1].strip()
+                        bot.context_manager.set_context(message.author.id, zone_display, None)
+                    elif t.startswith("🗺️ خريطة: "):
+                        map_name = t.split(": ", 1)[1].strip()
+                        bot.context_manager.set_context(message.author.id, map_name, None)
+                    elif t.startswith("📦 "):
+                        item_name = t[2:].strip()
+                        bot.context_manager.set_context(message.author.id, item_name, None)
+                    elif t.startswith("⚖️ مقارنة: "):
+                        comp_part = t.split(": ", 1)[1].strip()
+                        left_name = comp_part.split(" vs ", 1)[0].strip() if " vs " in comp_part else comp_part
+                        if left_name:
+                            bot.context_manager.set_context(message.author.id, left_name, None)
                     else:
-                        bot.context_manager.set_context(message.author.id, t, None)
-
-    # حقن السياق
-    original_content = content
-    question = bot.context_manager.inject_context(message.author.id, content)
-    if question != original_content and message.reference:
-        ref_msg = getattr(message.reference, 'resolved', None)
-        if not ref_msg and getattr(message.reference, 'message_id', None):
-            try:
-                ref_msg = await message.channel.fetch_message(message.reference.message_id)
-            except Exception:
-                ref_msg = None
-        if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
-            try:
-                await message.add_reaction('👀')
-            except Exception:
-                pass
-    if question.startswith('دليل '):
-        question = question[5:]
+                        guess_results = bot.search_engine.search(t, limit=1)
+                        if guess_results:
+                            gitem = guess_results[0]['item']
+                            gname = bot.search_engine.extract_name(gitem)
+                            bot.context_manager.set_context(message.author.id, gname, gitem)
+                        else:
+                            bot.context_manager.set_context(message.author.id, t, None)
+        
+        original_content = content
+        question = bot.context_manager.inject_context(message.author.id, content)
+        if question != original_content and message.reference:
+            ref_msg = getattr(message.reference, 'resolved', None)
+            if not ref_msg and getattr(message.reference, 'message_id', None):
+                try:
+                    ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                except Exception:
+                    ref_msg = None
+            if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
+                try:
+                    await message.add_reaction('👀')
+                except Exception:
+                    pass
+        if question.startswith('دليل '):
+            question = question[5:]
+    except Exception as e:
+        logger.error(f"خطأ في on_message: {e}", exc_info=True)
+        try:
+            embed = EmbedBuilder.error(
+                "خطأ غير متوقع",
+                "صار خطأ داخل البوت.\nلو تكرر، بلغ الإدارة مع صورة من الرسالة."
+            )
+            await message.reply(embed=embed)
+        except Exception:
+            pass
+        return
     
     crafting_keywords = [
         'ادوات', 'أدوات',
