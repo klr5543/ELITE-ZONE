@@ -1764,6 +1764,87 @@ async def on_message(message: discord.Message):
         else:
             main_word = " ".join(english_words_lower)
             search_query = main_word
+
+    zone_query = False
+    zone_name_lower = None
+    if english_words_lower:
+        if not hasattr(bot, "zone_names"):
+            zones = set()
+            for it in bot.database.items:
+                if isinstance(it, dict):
+                    fi = it.get('foundIn')
+                    if isinstance(fi, str):
+                        for part in fi.split(','):
+                            part = part.strip()
+                            if part:
+                                zones.add(part)
+            bot.zone_names = zones
+        zone_names_lower = {z.lower() for z in bot.zone_names}
+        for w in english_words_lower:
+            lw = w.lower()
+            if lw in zone_names_lower:
+                zone_name_lower = lw
+                break
+        if zone_name_lower:
+            other_words = [w.lower() for w in english_words_lower if w.lower() != zone_name_lower]
+            filler_words = {'zone', 'area', 'type', 'region'}
+            if not other_words or all(w in filler_words for w in other_words):
+                zone_query = True
+
+    if zone_query and not is_crafting_question and not is_obtain_question:
+        matched_items = []
+        for it in bot.database.items:
+            if not isinstance(it, dict):
+                continue
+            fi = it.get('foundIn')
+            if not isinstance(fi, str):
+                continue
+            parts = [p.strip().lower() for p in fi.split(',') if p.strip()]
+            if zone_name_lower in parts:
+                matched_items.append(it)
+        if matched_items:
+            matched_items_sorted = sorted(
+                matched_items,
+                key=lambda it: bot.search_engine.extract_name(it)
+            )
+            limited_items = matched_items_sorted[:10]
+            zone_display = next(
+                (z for z in getattr(bot, "zone_names", []) if z.lower() == zone_name_lower),
+                zone_name_lower.capitalize()
+            )
+            embed = discord.Embed(
+                title=f"🧭 منطقة اللوت: {zone_display}",
+                description=f"أمثلة على القطع التي تلقاها في منطقة {zone_display}:",
+                color=COLORS["info"],
+                timestamp=datetime.now()
+            )
+            lines = []
+            for it in limited_items:
+                name = bot.search_engine.extract_name(it)
+                rarity = EmbedBuilder.extract_field(it, 'rarity') or ''
+                text = name
+                if rarity:
+                    text = f"{name} ({rarity})"
+                lines.append(f"- {text}")
+            extra_count = len(matched_items_sorted) - len(limited_items)
+            if extra_count > 0:
+                lines.append(f"+ {extra_count} قطع أخرى في هذه المنطقة")
+            embed.add_field(
+                name="اللوت في المنطقة",
+                value="\n".join(lines),
+                inline=False
+            )
+        else:
+            zone_display = zone_name_lower.capitalize() if zone_name_lower else question
+            embed = EmbedBuilder.warning(
+                "منطقة غير معروفة",
+                f"ما لقيت منطقة لوت باسم {zone_display} في الداتا."
+            )
+        reply = await message.reply(embed=embed)
+        await reply.add_reaction('✅')
+        await reply.add_reaction('❌')
+        bot.questions_answered += 1
+        return
     
     gun_parts_family_query = (
         is_obtain_question
