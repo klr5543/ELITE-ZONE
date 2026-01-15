@@ -601,7 +601,7 @@ class SearchEngine:
                 elif isinstance(value, str) and value:
                     return value
         
-        return "غير معروف"
+        return "لا يوجد اسم واضح لهذا الغرض في قاعدة البيانات. إذا عندك معلومة أو اسم أدق شاركها مع المجتمع ليستفيد الجميع."
     
     def find_similar(self, query: str, limit: int = 3) -> list:
         """إيجاد عناصر مشابهة للاقتراحات"""
@@ -1115,7 +1115,7 @@ class EmbedBuilder:
 
         # إذا لم يوجد اسم، استخدم وصف منطقي في العنوان
         if not name:
-            name = 'غرض بدون اسم'
+            name = 'غرض بدون اسم (لم يتم تعريفه في الداتا)'
 
         # منطق الرد الذكي حسب نوع السؤال
         if intent == 'loot':
@@ -1134,18 +1134,18 @@ class EmbedBuilder:
                 text = f"{name} مرتبط بمهمة أو حدث خاص في اللعبة. راجع قائمة المهام أو اسأل المجتمع عن تفاصيل الحصول عليه."
             elif 'consumable' in type_str or 'food' in type_str:
                 text = f"{name} غالبًا تحصل عليه من الصناديق العامة أو عند استكشاف المناطق السكنية."
-            elif name and name != 'غرض بدون اسم':
-                text = f"لا توجد معلومات كافية عن {name} في قاعدة البيانات. إذا عندك تفاصيل أو تجربة، شاركها مع المجتمع ليستفيد الجميع."
+            elif name and not name.startswith('غرض بدون اسم'):
+                text = f"لا يوجد مكان محدد لهذا الغرض في قاعدة البيانات. إذا عندك تجربة أو معلومة شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا سؤال اللاعبين أو البحث في الويكي الرسمي."
             else:
-                text = "لا توجد معلومات كافية عن هذا الغرض في قاعدة البيانات. إذا عندك تفاصيل أو تجربة، شاركها مع المجتمع ليستفيد الجميع."
+                text = "هذا الغرض غير معرف في قاعدة البيانات. إذا عندك تجربة أو معلومة شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا سؤال اللاعبين أو البحث في الويكي الرسمي."
         elif intent == 'location':
             location = item.get('location') or item.get('foundIn')
             if location:
                 text = f"غالبًا يوجد {name} في: {location}."
-            elif name and name != 'غرض بدون اسم':
-                text = f"لا توجد معلومات كافية عن {name} في قاعدة البيانات. إذا عندك تفاصيل أو تجربة، شاركها مع المجتمع ليستفيد الجميع."
+            elif name and not name.startswith('غرض بدون اسم'):
+                text = f"لا يوجد مكان محدد لهذا الغرض في قاعدة البيانات. إذا عندك تجربة أو معلومة شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا سؤال اللاعبين أو البحث في الويكي الرسمي."
             else:
-                text = "لا توجد معلومات كافية عن هذا الغرض في قاعدة البيانات. إذا عندك تفاصيل أو تجربة، شاركها مع المجتمع ليستفيد الجميع."
+                text = "هذا الغرض غير معرف في قاعدة البيانات. إذا عندك تجربة أو معلومة شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا سؤال اللاعبين أو البحث في الويكي الرسمي."
         
         if translated_desc:
             description = EmbedBuilder.clean_description(translated_desc)
@@ -1237,7 +1237,8 @@ class EmbedBuilder:
             if field in item and isinstance(item[field], str):
                 name = item[field]
                 break
-        name = name or 'غير معروف'
+        if not name or name.strip() == '' or name == 'غير معروف':
+            name = 'غرض بدون اسم (لم يتم تعريفه في الداتا)'
 
         # Default short description
         desc = item.get('description') or item.get('shortDescription') or ''
@@ -1271,12 +1272,15 @@ class EmbedBuilder:
                 if found_in:
                     text = f"عادةً يُوجد {name} في: {found_in}."
                 else:
-                    text = f"هذا الغرض لا يملك مكان ثابت أو معروف للحصول عليه في اللعبة. حاول البحث في مناطق اللوت المختلفة مثل Industrial."
+                    text = f"لا يوجد مكان محدد لهذا الغرض في قاعدة البيانات. إذا عندك تجربة أو معلومة شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا سؤال اللاعبين أو البحث في الويكي الرسمي."
 
         # Location / zone intent
         elif intent == 'location' or item.get('location'):
             location = item.get('location') or item.get('foundIn')
-            text = f"{name} يُوجد عادة في: {location}." if location else f"لا يوجد مكان محدد لهذا الغرض في الداتا."
+            if location:
+                text = f"{name} يُوجد عادة في: {location}."
+            else:
+                text = f"لا يوجد مكان محدد لهذا الغرض في قاعدة البيانات. إذا عندك تجربة أو معلومة شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا سؤال اللاعبين أو البحث في الويكي الرسمي."
 
         # Definition or fallback
         else:
@@ -1525,7 +1529,7 @@ class DaleelBot(commands.Bot):
     def get_uptime(self) -> str:
         """حساب وقت التشغيل"""
         if not self.start_time:
-            return "غير معروف"
+            return "لا يوجد اسم واضح لهذا الغرض في قاعدة البيانات. إذا عندك معلومة أو اسم أدق شاركها مع المجتمع ليستفيد الجميع."
         
         delta = datetime.now() - self.start_time
         hours, remainder = divmod(int(delta.total_seconds()), 3600)
@@ -2084,7 +2088,7 @@ async def on_message(message: discord.Message):
         else:
             zone_display = zone_name_lower.capitalize() if zone_name_lower else question
             embed = EmbedBuilder.warning(
-                "منطقة غير معروفة",
+                "منطقة غير معروفة (لم يتم تعريفها في الداتا)",
                 f"ما لقيت منطقة لوت باسم {zone_display} في الداتا."
             )
         reply = await reply_with_feedback(message, embed)
@@ -2498,7 +2502,7 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             "وBuried City (مدينة منهارة مغطاة بالرمل)، "
             "وSpaceport (منشأة إطلاق قديمة)، "
             "وBlue Gate (جبال وأنفاق ومدن ومجمعات تحت الأرض). "
-            "وفيه إشاعة عن منطقة اسمها Stella Montis لكن الوصول لها غير معروف."
+            "وفيه إشاعة عن منطقة اسمها Stella Montis لكن الوصول لها غير محدد أو موثق في الداتا."
         )
         if context:
             context = context + " | " + rust_belt_context
