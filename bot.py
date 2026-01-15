@@ -228,6 +228,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger('Daleel')
 
+print("بدء تشغيل البوت...")
+logging.info("بدء تشغيل البوت...")
+
 # ═══════════════════════════════════════════════════════════════
 # قاعدة البيانات - Database Manager
 # ═══════════════════════════════════════════════════════════════
@@ -1813,7 +1816,6 @@ async def on_message(message: discord.Message):
     is_queen_query = any(
         term in content_lower for term in ['queen', 'كوين', 'الكوين']
     )
-    
     if is_queen_query:
         queen_candidates = [
             b for b in bot.database.bots
@@ -1981,4 +1983,6 @@ async def on_message(message: discord.Message):
     await message.reply(embed=embed)
 
 if __name__ == "__main__":
+    print("تشغيل البوت الآن...")
+    logging.info("تشغيل البوت الآن...")
     bot.run(DISCORD_TOKEN)
