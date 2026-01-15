@@ -927,7 +927,10 @@ class ContextManager:
         # كلمات تدل على سؤال متابعة
         follow_up_keywords = [
             'نسبة', 'spawn', 'الموقع', 'location', 'وين', 'where',
-            'كم', 'how much', 'الندرة', 'rarity'
+            'كم', 'how much', 'الندرة', 'rarity',
+            'طريقة', 'افضل طريقة', 'أفضل طريقة',
+            'استراتيجية', 'strategy',
+            'how to', 'how do', 'use', 'استعمل'
         ]
         
         question_lower = question.lower()
@@ -1541,12 +1544,71 @@ async def on_message(message: discord.Message):
     
     requires_prefix = True
     if requires_prefix:
-        if not (content_lower.startswith('دليل') or content_lower.startswith('daleel') or (bot.user in message.mentions)):
+        is_reply_to_bot = False
+        if message.reference:
+            ref_msg = getattr(message.reference, 'resolved', None)
+            if not ref_msg and getattr(message.reference, 'message_id', None):
+                try:
+                    ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                except Exception:
+                    ref_msg = None
+            if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
+                is_reply_to_bot = True
+        if not (content_lower.startswith('دليل') or content_lower.startswith('daleel') or (bot.user in message.mentions) or is_reply_to_bot):
             await bot.process_commands(message)
             return
     
+    user_ctx = bot.context_manager.get_context(message.author.id)
+    if not user_ctx and message.reference:
+        ref_msg = getattr(message.reference, 'resolved', None)
+        if not ref_msg and getattr(message.reference, 'message_id', None):
+            try:
+                ref_msg = await message.channel.fetch_message(message.reference.message_id)
+            except Exception:
+                ref_msg = None
+        if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
+            ref_embeds = getattr(ref_msg, 'embeds', []) or []
+            ref_title = ref_embeds[0].title if ref_embeds else None
+            if ref_title:
+                t = ref_title.strip()
+                if t.startswith("🧭 منطقة اللوت: "):
+                    zone_display = t.split(": ", 1)[1].strip()
+                    bot.context_manager.set_context(message.author.id, zone_display, None)
+                elif t.startswith("🗺️ خريطة: "):
+                    map_name = t.split(": ", 1)[1].strip()
+                    bot.context_manager.set_context(message.author.id, map_name, None)
+                elif t.startswith("📦 "):
+                    item_name = t[2:].strip()
+                    bot.context_manager.set_context(message.author.id, item_name, None)
+                elif t.startswith("⚖️ مقارنة: "):
+                    comp_part = t.split(": ", 1)[1].strip()
+                    left_name = comp_part.split(" vs ", 1)[0].strip() if " vs " in comp_part else comp_part
+                    if left_name:
+                        bot.context_manager.set_context(message.author.id, left_name, None)
+                else:
+                    guess_results = bot.search_engine.search(t, limit=1)
+                    if guess_results:
+                        gitem = guess_results[0]['item']
+                        gname = bot.search_engine.extract_name(gitem)
+                        bot.context_manager.set_context(message.author.id, gname, gitem)
+                    else:
+                        bot.context_manager.set_context(message.author.id, t, None)
+
     # حقن السياق
+    original_content = content
     question = bot.context_manager.inject_context(message.author.id, content)
+    if question != original_content and message.reference:
+        ref_msg = getattr(message.reference, 'resolved', None)
+        if not ref_msg and getattr(message.reference, 'message_id', None):
+            try:
+                ref_msg = await message.channel.fetch_message(message.reference.message_id)
+            except Exception:
+                ref_msg = None
+        if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
+            try:
+                await message.add_reaction('👀')
+            except Exception:
+                pass
     if question.startswith('دليل '):
         question = question[5:]
     
@@ -1843,6 +1905,7 @@ async def on_message(message: discord.Message):
         reply = await message.reply(embed=embed)
         await reply.add_reaction('✅')
         await reply.add_reaction('❌')
+        bot.context_manager.set_context(message.author.id, zone_display, None)
         bot.questions_answered += 1
         return
     
