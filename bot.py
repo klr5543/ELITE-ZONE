@@ -1980,4 +1980,3 @@ async def on_message(message: discord.Message):
         "ما قدرت ألقى شيء واضح في داتا ARC Raiders يطابق سؤالك.\nجرّب تغير صياغة السؤال أو تكتب اسم الآيتم مباشرة."
     )
     await message.reply(embed=embed)
-``
