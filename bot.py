@@ -88,8 +88,10 @@ ARABIC_TO_ENGLISH = {
     'طريق': '',
     'اسرع': '',
     'أسرع': '',
-    'سبون': '',
-    'السبون': '',
+    'سبون': 'spawn',
+    'السبون': 'spawn',
+    'rate': '',
+    'spawnrate': '',
     'دليل': '',
     
     # فليرات
@@ -1170,6 +1172,12 @@ class EmbedBuilder:
         if price:
             embed.add_field(name="💰 السعر", value=str(price), inline=True)
         
+        suppress_obtain_field = False
+        if translated_desc:
+            td = str(translated_desc)
+            if any(x in td for x in ["المنطقة:", "الموقع:", "نسبة الظهور", "التجار", "السعر"]):
+                suppress_obtain_field = True
+        
         obtain_lines = []
         found_in = item.get('foundIn')
         if found_in:
@@ -1186,7 +1194,7 @@ class EmbedBuilder:
         traders = item.get('traders') or item.get('soldBy')
         if traders:
             obtain_lines.append("- متوفر عند التجار")
-        if obtain_lines:
+        if obtain_lines and not suppress_obtain_field:
             embed.add_field(name="طرق الحصول", value="\n".join(obtain_lines), inline=False)
         
         # صورة العنصر المصغرة (Thumbnail)
@@ -1612,7 +1620,15 @@ async def on_message(message: discord.Message):
     if question.startswith('دليل '):
         question = question[5:]
     
-    crafting_keywords = ['ادوات', 'أدوات', 'تصنع', 'تسوي', 'تصنيع', 'recipe', 'craft', 'مكونات', 'مخطط', 'متطلبات', 'متطلباته', 'متطلباتها']
+    crafting_keywords = [
+        'ادوات', 'أدوات',
+        'تصنع', 'تصنيع',
+        'تسوي', 'أسوي', 'اسوي',
+        'أصنع', 'اصنع', 'أصنعه', 'اصنعه', 'أصنعها', 'اصنعها',
+        'recipe', 'craft',
+        'مكونات', 'مخطط',
+        'متطلبات', 'متطلباته', 'متطلباتها'
+    ]
     is_crafting_question = any(keyword in content_lower for keyword in crafting_keywords)
     
     location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
@@ -1824,8 +1840,14 @@ async def on_message(message: discord.Message):
             main_word = id_like
             search_query = main_word
         else:
-            main_word = " ".join(english_words_lower)
-            search_query = main_word
+            query_words = {'spawn', 'rate', 'drop', 'drops', 'location', 'where', 'find', 'how', 'much', 'spawnrate'}
+            item_words = [w for w in english_words_lower if w not in query_words]
+            if item_words:
+                main_word = max(item_words, key=len)
+                search_query = main_word
+            else:
+                main_word = " ".join(english_words_lower)
+                search_query = main_word
 
     zone_query = False
     zone_name_lower = None
