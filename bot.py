@@ -1352,6 +1352,9 @@ bot = DaleelBot()
 @bot.tree.command(name="help", description="عرض المساعدة")
 async def help_command(interaction: discord.Interaction):
     """أمر المساعدة"""
+    if interaction.channel and interaction.channel.id != ALLOWED_CHANNEL_ID:
+        await interaction.response.send_message("استخدم قناة الأسئلة المخصصة فقط.", ephemeral=True)
+        return
     embed = discord.Embed(
         title="📖 مساعدة دليل",
         description="أنا **دليل** - مساعدك الذكي لعالم ARC Raiders!",
@@ -1391,6 +1394,9 @@ async def help_command(interaction: discord.Interaction):
 @bot.tree.command(name="stats", description="عرض إحصائيات البوت")
 async def stats_command(interaction: discord.Interaction):
     """أمر الإحصائيات"""
+    if interaction.channel and interaction.channel.id != ALLOWED_CHANNEL_ID:
+        await interaction.response.send_message("استخدم قناة الأسئلة المخصصة فقط.", ephemeral=True)
+        return
     embed = EmbedBuilder.stats_embed(
         bot.database.get_stats(),
         bot.ai_manager.usage_stats,
@@ -1402,6 +1408,9 @@ async def stats_command(interaction: discord.Interaction):
 @app_commands.describe(query="كلمة البحث")
 async def search_command(interaction: discord.Interaction, query: str):
     """أمر البحث"""
+    if interaction.channel and interaction.channel.id != ALLOWED_CHANNEL_ID:
+        await interaction.response.send_message("استخدم قناة الأسئلة المخصصة فقط.", ephemeral=True)
+        return
     await interaction.response.defer()
     
     results = bot.search_engine.search(query, limit=5)
@@ -1607,6 +1616,71 @@ async def on_message(message: discord.Message):
             bot.questions_answered += 1
             return
     
+    if is_comparative_question(content):
+        names = re.findall(r'[A-Za-z][A-Za-z ]+', content)
+        unique = []
+        for n in names:
+            nn = n.strip()
+            if nn and nn.lower() not in [x.lower() for x in unique]:
+                unique.append(nn)
+        if len(unique) >= 2:
+            left_name, right_name = unique[0], unique[1]
+            left_results = bot.search_engine.search(left_name, limit=1)
+            right_results = bot.search_engine.search(right_name, limit=1)
+            if left_results and right_results:
+                left_item = left_results[0]['item']
+                right_item = right_results[0]['item']
+                def summarize(it):
+                    n = bot.search_engine.extract_name(it)
+                    cat = EmbedBuilder.extract_field(it, 'category') or ''
+                    typ = EmbedBuilder.extract_field(it, 'type') or ''
+                    rar = EmbedBuilder.extract_field(it, 'rarity') or ''
+                    price = it.get('price') or it.get('value') or ''
+                    found = it.get('foundIn') or ''
+                    bench = it.get('craftBench') or ''
+                    recipe = it.get('recipe') if isinstance(it.get('recipe'), dict) else None
+                    rcount = len(recipe) if recipe else 0
+                    parts = []
+                    if cat: parts.append(f"الفئة: {cat}")
+                    if typ: parts.append(f"النوع: {typ}")
+                    if rar: parts.append(f"الندرة: {rar}")
+                    if price: parts.append(f"السعر: {price}")
+                    if found: parts.append(f"يوجد في: {found}")
+                    if bench: parts.append(f"يتصنع في: {bench}")
+                    if rcount: parts.append(f"تعقيد التصنيع: {rcount} جزء")
+                    return n, "\n".join(parts) if parts else "لا توجد بيانات كافية"
+                ln, ltext = summarize(left_item)
+                rn, rtext = summarize(right_item)
+                embed = discord.Embed(
+                    title=f"⚖️ مقارنة: {ln} vs {rn}",
+                    color=COLORS["info"],
+                    timestamp=datetime.now()
+                )
+                embed.add_field(name=ln, value=ltext, inline=True)
+                embed.add_field(name=rn, value=rtext, inline=True)
+                def rarity_score(r):
+                    m = {'common':1,'uncommon':2,'rare':3,'epic':4,'legendary':5}
+                    rv = str(r).lower()
+                    return m.get(rv, 0)
+                ls = rarity_score(EmbedBuilder.extract_field(left_item, 'rarity') or '')
+                rs = rarity_score(EmbedBuilder.extract_field(right_item, 'rarity') or '')
+                lp = left_item.get('price') or left_item.get('value') or 0
+                rp = right_item.get('price') or right_item.get('value') or 0
+                lrc = len(left_item.get('recipe')) if isinstance(left_item.get('recipe'), dict) else 0
+                rrc = len(right_item.get('recipe')) if isinstance(right_item.get('recipe'), dict) else 0
+                choice = ln
+                reason = "ندرة أعلى" if ls>rs else ("سعر أعلى عادة أقوى" if lp>rp else ("تصنيع أبسط" if lrc<rrc else "تقارب، اختر حسب أسلوبك"))
+                if rs>ls or (lp>rp and rs>=ls) or (rrc<lrc and rs>=ls):
+                    choice = rn
+                    reason = "ندرة أعلى" if rs>ls else ("سعر أعلى عادة أقوى" if rp>lp else ("تصنيع أبسط" if rrc<lrc else "تقارب، اختر حسب أسلوبك"))
+                embed.add_field(name="الرأي المختصر", value=f"أنصح بـ {choice} ({reason}).", inline=False)
+                reply = await message.reply(embed=embed)
+                await reply.add_reaction('✅')
+                await reply.add_reaction('❌')
+                bot.context_manager.set_context(message.author.id, choice, left_item if choice==ln else right_item)
+                bot.questions_answered += 1
+                return
+
     # تصحيح أخطاء إملائية شائعة
     typo_corrections = {
         'have': 'heavy',
