@@ -1851,6 +1851,7 @@ async def on_message(message: discord.Message):
     }
     
     english_words = re.findall(r'[a-zA-Z_]+', content)
+    english_words_raw_lower = [w.lower() for w in english_words]
     english_words_lower = [typo_corrections.get(w.lower(), w.lower()) for w in english_words]
     search_query = question
     main_word = None
@@ -1953,8 +1954,10 @@ async def on_message(message: discord.Message):
         is_obtain_question
         and 'gun' in english_words_lower
         and 'parts' in english_words_lower
-        and not any(w in ['light', 'heavy', 'complex'] for w in english_words_lower)
+        and not any(w in ['light', 'heavy', 'complex'] for w in english_words_raw_lower)
     )
+    if gun_parts_family_query:
+        search_query = "gun parts"
     
     ai_configured = is_ai_configured()
     use_ai = should_use_ai(question) and ai_configured
