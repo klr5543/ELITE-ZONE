@@ -1126,13 +1126,13 @@ class EmbedBuilder:
             elif found_in:
                 text = f"غالبًا تجد {name} في منطقة: {found_in}."
             else:
-                text = f"لا يوجد مكان ثابت أو طريقة محددة للحصول على {name}. جرب البحث في مناطق اللوت أو اسأل اللاعبين عن تجاربهم."
+                text = f"لا يوجد مكان ثابت أو طريقة محددة للحصول على {name}. غالبًا يظهر في مناطق اللوت أو عند الأعداء، أو اسأل اللاعبين عن تجاربهم."
         elif intent == 'location':
             location = item.get('location') or item.get('foundIn')
             if location:
                 text = f"غالبًا يوجد {name} في: {location}."
             else:
-                text = f"لا يوجد مكان محدد لهذا الغرض في الداتا. غالبًا يظهر في مناطق اللوت أو عند الأعداء."
+                text = f"لا يوجد مكان محدد لهذا الغرض في الداتا. غالبًا يظهر في مناطق اللوت أو عند الأعداء، أو اسأل اللاعبين عن تجاربهم."
         
         if translated_desc:
             description = EmbedBuilder.clean_description(translated_desc)
