@@ -1777,7 +1777,7 @@ async def on_message(message: discord.Message):
     
     results = bot.search_engine.search(search_query, limit=5 if (is_crafting_question or is_obtain_question or is_location_question) else 1)
     
-    if (is_crafting_question or is_obtain_question or is_location_question) and results and not gun_parts_family_query:
+    if is_crafting_question and results and not gun_parts_family_query:
         recipe_candidates = []
         for r in results:
             item_candidate = r['item']
