@@ -1539,6 +1539,12 @@ async def on_message(message: discord.Message):
         await message.reply(embed=embed, delete_after=10)
         return
     
+    requires_prefix = True
+    if requires_prefix:
+        if not (content_lower.startswith('دليل') or content_lower.startswith('daleel') or (bot.user in message.mentions)):
+            await bot.process_commands(message)
+            return
+    
     # حقن السياق
     question = bot.context_manager.inject_context(message.author.id, content)
     if question.startswith('دليل '):
