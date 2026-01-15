@@ -1125,14 +1125,18 @@ class EmbedBuilder:
                 text = f"يمكنك الحصول على {name} من: {', '.join(drops[:6])} وغيرها."
             elif found_in:
                 text = f"غالبًا تجد {name} في منطقة: {found_in}."
-            else:
+            elif name and name != 'غرض بدون اسم':
                 text = f"لا يوجد مكان ثابت أو طريقة محددة للحصول على {name}. غالبًا يظهر في مناطق اللوت أو عند الأعداء، أو اسأل اللاعبين عن تجاربهم."
+            else:
+                text = "لا توجد معلومات كافية عن هذا الغرض في قاعدة البيانات. إذا عندك تفاصيل أو تجربة، شاركها مع المجتمع ليستفيد الجميع."
         elif intent == 'location':
             location = item.get('location') or item.get('foundIn')
             if location:
                 text = f"غالبًا يوجد {name} في: {location}."
-            else:
+            elif name and name != 'غرض بدون اسم':
                 text = f"لا يوجد مكان محدد لهذا الغرض في الداتا. غالبًا يظهر في مناطق اللوت أو عند الأعداء، أو اسأل اللاعبين عن تجاربهم."
+            else:
+                text = "لا توجد معلومات كافية عن هذا الغرض في قاعدة البيانات. إذا عندك تفاصيل أو تجربة، شاركها مع المجتمع ليستفيد الجميع."
         
         if translated_desc:
             description = EmbedBuilder.clean_description(translated_desc)
