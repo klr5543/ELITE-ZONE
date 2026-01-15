@@ -1167,6 +1167,25 @@ class EmbedBuilder:
         if price:
             embed.add_field(name="💰 السعر", value=str(price), inline=True)
         
+        obtain_lines = []
+        found_in = item.get('foundIn')
+        if found_in:
+            obtain_lines.append(f"- يوجد في: {found_in}")
+        craft_bench = item.get('craftBench')
+        if craft_bench:
+            obtain_lines.append(f"- يتصنع في: {craft_bench}")
+        recipe = item.get('recipe')
+        if isinstance(recipe, dict) and recipe:
+            obtain_lines.append("- له وصفة تصنيع، شوف تفاصيل التصنيع")
+        drops = item.get('drops')
+        if isinstance(drops, list) and drops:
+            obtain_lines.append(f"- يسقط من: {len(drops)} عدو/بوس")
+        traders = item.get('traders') or item.get('soldBy')
+        if traders:
+            obtain_lines.append("- متوفر عند التجار")
+        if obtain_lines:
+            embed.add_field(name="طرق الحصول", value="\n".join(obtain_lines), inline=False)
+        
         # صورة العنصر المصغرة (Thumbnail)
         img_url = EmbedBuilder.get_image_url(item)
         if img_url:
