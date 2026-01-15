@@ -1523,6 +1523,74 @@ async def on_message(message: discord.Message):
     ]
     is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
     
+    is_queen_query = any(
+        term in content_lower for term in ['queen', 'كوين', 'الكوين']
+    )
+    
+    if is_queen_query:
+        queen_candidates = [
+            b for b in bot.database.bots
+            if isinstance(b, dict)
+            and 'name' in b
+            and isinstance(b['name'], str)
+            and 'queen' in b['name'].lower()
+        ]
+        if queen_candidates:
+            item = queen_candidates[0]
+            description = None
+            if 'description' in item:
+                desc_val = item['description']
+                if isinstance(desc_val, dict):
+                    description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
+                else:
+                    description = str(desc_val)
+            translated_desc = None
+            if description and description != 'لا يوجد وصف':
+                translated_desc = await bot.ai_manager.translate_to_arabic(description)
+            embed = EmbedBuilder.item_embed(item, translated_desc)
+            drops = item.get('drops') or []
+            if drops and isinstance(drops, list):
+                drop_lines = []
+                for drop_id in drops:
+                    drop_item = next(
+                        (it for it in bot.database.items if isinstance(it, dict) and it.get('id') == drop_id),
+                        None
+                    )
+                    if drop_item:
+                        drop_name = bot.search_engine.extract_name(drop_item)
+                        drop_lines.append(f"- {drop_name}")
+                    else:
+                        drop_lines.append(f"- {drop_id}")
+                if drop_lines:
+                    embed.add_field(
+                        name="القطع التي تسقط منها",
+                        value="\n".join(drop_lines),
+                        inline=False
+                    )
+            reply = await message.reply(embed=embed)
+            
+            if use_ai and (is_crafting_question or is_obtain_question or is_location_question):
+                ai_context_parts = []
+                name_for_ai = bot.search_engine.extract_name(item)
+                ai_context_parts.append(f"الآيتم: {name_for_ai}")
+                if is_obtain_question:
+                    ai_context_parts.append("السؤال عن طرق الحصول أو أفضل طريقة للفارم.")
+                if is_crafting_question:
+                    ai_context_parts.append("السؤال عن مكونات التصنيع أو نصائح للصناعة.")
+                if is_location_question:
+                    ai_context_parts.append("السؤال عن أماكن الوجود أو السبون.")
+                ai_context = " | ".join(ai_context_parts)
+                await ask_ai_and_reply(
+                    message,
+                    f"{ai_context}\n\nسؤال اللاعب: {question}"
+                )
+            name = bot.search_engine.extract_name(item)
+            bot.context_manager.set_context(message.author.id, name, item)
+            await reply.add_reaction('✅')
+            await reply.add_reaction('❌')
+            bot.questions_answered += 1
+            return
+    
     english_words = re.findall(r'[a-zA-Z_]+', content)
     english_words_lower = [w.lower() for w in english_words]
     search_query = question
@@ -1545,8 +1613,6 @@ async def on_message(message: discord.Message):
     
     ai_configured = is_ai_configured()
     use_ai = should_use_ai(question) and ai_configured
-    if is_crafting_question or is_obtain_question or is_location_question:
-        use_ai = False
     
     results = bot.search_engine.search(search_query, limit=5 if (is_crafting_question or is_obtain_question or is_location_question) else 1)
     
@@ -1577,58 +1643,6 @@ async def on_message(message: discord.Message):
     match_threshold = 0.6
     if is_crafting_question or is_obtain_question or is_location_question:
         match_threshold = 0.3
-    
-    is_queen_query = is_obtain_question and any(
-        term in content_lower for term in ['queen', 'كوين', 'الكوين']
-    )
-    
-    if is_queen_query:
-        queen_candidates = [
-            b for b in bot.db.bots
-            if isinstance(b, dict)
-            and 'name' in b
-            and isinstance(b['name'], str)
-            and 'queen' in b['name'].lower()
-        ]
-        if queen_candidates:
-            item = queen_candidates[0]
-            description = None
-            if 'description' in item:
-                desc_val = item['description']
-                if isinstance(desc_val, dict):
-                    description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-                else:
-                    description = str(desc_val)
-            translated_desc = None
-            if description and description != 'لا يوجد وصف':
-                translated_desc = await bot.ai_manager.translate_to_arabic(description)
-            embed = EmbedBuilder.item_embed(item, translated_desc)
-            drops = item.get('drops') or []
-            if drops and isinstance(drops, list):
-                drop_lines = []
-                for drop_id in drops:
-                    drop_item = next(
-                        (it for it in bot.db.items if isinstance(it, dict) and it.get('id') == drop_id),
-                        None
-                    )
-                    if drop_item:
-                        drop_name = bot.search_engine.extract_name(drop_item)
-                        drop_lines.append(f"- {drop_name}")
-                    else:
-                        drop_lines.append(f"- {drop_id}")
-                if drop_lines:
-                    embed.add_field(
-                        name="القطع التي تسقط منها",
-                        value="\n".join(drop_lines),
-                        inline=False
-                    )
-            reply = await message.reply(embed=embed)
-            name = bot.search_engine.extract_name(item)
-            bot.context_manager.set_context(message.author.id, name, item)
-            await reply.add_reaction('✅')
-            await reply.add_reaction('❌')
-            bot.questions_answered += 1
-            return
     
     if results and results[0]['score'] > match_threshold:
         result = results[0]
