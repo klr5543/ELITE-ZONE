@@ -1106,7 +1106,12 @@ class EmbedBuilder:
                     name = str(value)
                 if name:
                     break
-        name = name or 'غير معروف'
+        # استخدم اسم العنصر من id إذا لم يوجد أي اسم نصي
+        if not name:
+            if 'id' in item and isinstance(item['id'], str):
+                name = item['id'].replace('_', ' ').title()
+            else:
+                name = 'غرض غير محدد'
         
         if translated_desc:
             description = EmbedBuilder.clean_description(translated_desc)
@@ -1230,14 +1235,14 @@ class EmbedBuilder:
             else:
                 found_in = item.get('foundIn') or item.get('location')
                 if found_in:
-                    text = f"يمكن العثور على {name} في: {found_in}."
+                    text = f"عادةً يُوجد {name} في: {found_in}."
                 else:
-                    text = f"لا توجد بيانات مكانية واضحة للحصول على {name}."
+                    text = f"هذا الغرض لا يملك مكان ثابت أو معروف للحصول عليه في اللعبة. حاول البحث في مناطق اللوت المختلفة مثل Industrial."
 
         # Location / zone intent
         elif intent == 'location' or item.get('location'):
             location = item.get('location') or item.get('foundIn')
-            text = f"{name} يُوجد عادة في: {location}." if location else f"لا توجد بيانات مكانية واضحة لـ {name}."
+            text = f"{name} يُوجد عادة في: {location}." if location else f"لا يوجد مكان محدد لهذا الغرض في الداتا."
 
         # Definition or fallback
         else:
@@ -1258,8 +1263,22 @@ class EmbedBuilder:
                 else:
                     text = f"معلومات عن {name} غير متوفرة بالتفصيل."
 
+        # Emoji by type
+        emoji = "📦"
+        if 'weapon' in (item.get('type') or '').lower():
+            emoji = "🔫"
+        elif 'armor' in (item.get('type') or '').lower():
+            emoji = "🛡️"
+        elif 'key' in (item.get('type') or '').lower():
+            emoji = "🗝️"
+        elif 'component' in (item.get('type') or '').lower():
+            emoji = "⚙️"
+        elif 'consumable' in (item.get('type') or '').lower():
+            emoji = "💊"
+        elif 'quest' in (item.get('type') or '').lower():
+            emoji = "📜"
         embed = discord.Embed(
-            title=f"📦 {name}",
+            title=f"{emoji} {name}",
             description=text,
             color=COLORS['primary'],
             timestamp=datetime.now()
