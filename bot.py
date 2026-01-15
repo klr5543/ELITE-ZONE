@@ -1028,44 +1028,6 @@ class EmbedBuilder:
         embed.set_footer(text=f"🤖 {BOT_NAME}")
         return embed
 
-# ═══════════════════════════════════════════════════════════════
-# أزرار التقييم - Feedback Buttons
-# ═══════════════════════════════════════════════════════════════
-
-class FeedbackView(discord.ui.View):
-    def __init__(self, author_id: int, source_question: str, embed_title: str):
-        super().__init__(timeout=600)
-        self.author_id = author_id
-        self.source_question = source_question
-        self.embed_title = embed_title or ""
-    
-    async def _send_log(self, interaction: discord.Interaction, status: str):
-        try:
-            log_channel = bot.get_channel(LOG_CHANNEL_ID)
-            if log_channel:
-                await log_channel.send(
-                    f"📝 تقييم: {status}\n"
-                    f"👤 المرسل: <@{interaction.user.id}>\n"
-                    f"📦 العنوان: {self.embed_title}\n"
-                    f"🗨️ السؤال: {self.source_question}"
-                )
-        except Exception:
-            pass
-    
-    @discord.ui.button(label="إجابة صحيحة", style=discord.ButtonStyle.success, emoji="✅")
-    async def feedback_ok(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("تم تسجيل: إجابة صحيحة ✅", ephemeral=True)
-        await self._send_log(interaction, "صحيحة")
-    
-    @discord.ui.button(label="إجابة خاطئة", style=discord.ButtonStyle.danger, emoji="❌")
-    async def feedback_bad(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("تم تسجيل: إجابة خاطئة ❌ — أبلغنا الفريق.", ephemeral=True)
-        await self._send_log(interaction, "خاطئة")
-
-async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
-    view = FeedbackView(message.author.id, message.content, getattr(embed, "title", "") or "")
-    return await message.reply(embed=embed, view=view)
-    
     @staticmethod
     def extract_field(item: dict, field: str) -> str:
         """استخراج قيمة حقل - الإنجليزي للأسماء"""
@@ -1074,7 +1036,6 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
         
         value = item[field]
         
-        # لو dict (ترجمات متعددة)
         if isinstance(value, dict):
             if not value:
                 return None
@@ -1084,13 +1045,11 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
             first = next(iter(value.values()), None)
             return str(first) if first is not None else None
         
-        # لو string أو رقم
         return str(value) if value else None
     
     @staticmethod
     def get_image_url(item: dict) -> str:
         """الحصول على رابط صورة العنصر"""
-        # أولاً: لو في رابط صورة مباشر
         img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
         if img_url and isinstance(img_url, str) and img_url.startswith('http'):
             return img_url
@@ -1103,17 +1062,14 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
                 filename = filename.lstrip('/')
             return f"{IMAGES_BASE_URL}/{filename}"
         
-        # ثانياً: بناء الرابط من الـ id
         item_id = item.get('id') or item.get('itemId') or item.get('slug')
         if item_id:
-            # تحديد نوع المجلد
             item_type = item.get('type') or item.get('category') or ''
             if isinstance(item_type, dict):
                 item_type = item_type.get('en', '')
             
             item_type_lower = str(item_type).lower()
             
-            # تحديد المجلد المناسب
             if 'bot' in item_type_lower or 'enemy' in item_type_lower:
                 folder = 'bots'
             elif 'map' in item_type_lower:
@@ -1134,15 +1090,12 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
         """تنظيف الوصف من النصوص الروسية والشوائب"""
         if not text:
             return text
-        # استبدال كلمة запасية الروسية
         text = text.replace('запасية', 'احتياطية')
-        # إزالة أي حروف سيريلية أخرى إذا وجدت
         return text
 
     @staticmethod
     def item_embed(item: dict, translated_desc: str = None) -> discord.Embed:
         """إنشاء Embed لعنصر من اللعبة - الاسم إنجليزي والباقي عربي"""
-        # استخراج الاسم - الإنجليزي
         name = None
         for field in ['name', 'title', 'displayName', 'nameKey']:
             if field in item:
@@ -1155,11 +1108,9 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
                     break
         name = name or 'غير معروف'
         
-        # استخدم الوصف المترجم لو موجود
         if translated_desc:
             description = EmbedBuilder.clean_description(translated_desc)
         else:
-            # استخراج الوصف الأصلي
             description = None
             if 'description' in item:
                 desc_val = item['description']
@@ -1176,7 +1127,6 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
             timestamp=datetime.now()
         )
         
-        # إضافة الحقول - العناوين عربي
         category = EmbedBuilder.extract_field(item, 'category')
         if category:
             embed.add_field(name="📁 الفئة", value=category, inline=True)
@@ -1187,7 +1137,6 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
         
         rarity = EmbedBuilder.extract_field(item, 'rarity')
         if rarity:
-            # ترجمة الندرة للعربي
             rarity_ar = {
                 'common': 'عادي ⚪',
                 'uncommon': 'غير شائع 🟢', 
@@ -1197,7 +1146,6 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
             }.get(rarity.lower(), rarity)
             embed.add_field(name="💎 الندرة", value=rarity_ar, inline=True)
         
-        # الموقع مع رابط الخريطة
         location = EmbedBuilder.extract_field(item, 'location')
         if location:
             embed.add_field(name="📍 الموقع", value=location, inline=True)
@@ -1235,13 +1183,50 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
         if obtain_lines and not suppress_obtain_field:
             embed.add_field(name="طرق الحصول", value="\n".join(obtain_lines), inline=False)
         
-        # صورة العنصر المصغرة (Thumbnail)
         img_url = EmbedBuilder.get_image_url(item)
         if img_url:
             embed.set_thumbnail(url=img_url)
         
         embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
         return embed
+
+# ═══════════════════════════════════════════════════════════════
+# أزرار التقييم - Feedback Buttons
+# ═══════════════════════════════════════════════════════════════
+
+class FeedbackView(discord.ui.View):
+    def __init__(self, author_id: int, source_question: str, embed_title: str):
+        super().__init__(timeout=600)
+        self.author_id = author_id
+        self.source_question = source_question
+        self.embed_title = embed_title or ""
+    
+    async def _send_log(self, interaction: discord.Interaction, status: str):
+        try:
+            log_channel = bot.get_channel(LOG_CHANNEL_ID)
+            if log_channel:
+                await log_channel.send(
+                    f"📝 تقييم: {status}\n"
+                    f"👤 المرسل: <@{interaction.user.id}>\n"
+                    f"📦 العنوان: {self.embed_title}\n"
+                    f"🗨️ السؤال: {self.source_question}"
+                )
+        except Exception:
+            pass
+    
+    @discord.ui.button(label="إجابة صحيحة", style=discord.ButtonStyle.success, emoji="✅")
+    async def feedback_ok(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("تم تسجيل: إجابة صحيحة ✅", ephemeral=True)
+        await self._send_log(interaction, "صحيحة")
+    
+    @discord.ui.button(label="إجابة خاطئة", style=discord.ButtonStyle.danger, emoji="❌")
+    async def feedback_bad(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("تم تسجيل: إجابة خاطئة ❌ — أبلغنا الفريق.", ephemeral=True)
+        await self._send_log(interaction, "خاطئة")
+
+async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
+    view = FeedbackView(message.author.id, message.content, getattr(embed, "title", "") or "")
+    return await message.reply(embed=embed, view=view)
     
     @staticmethod
     def map_embed(map_name: str, map_data: dict = None) -> discord.Embed:
