@@ -206,8 +206,7 @@ def extract_intents(text: str) -> list:
 # مثال استبدال:
 # intent = extract_intent(text)
 # يصبح:
-intents = extract_intents(text)
-intent = intents[0] if intents else "general"
+## مثال فقط، لا تستخدم خارج دوال أو أحداث البوت
 # ...existing code...
 
 # روابط الصور من GitHub
