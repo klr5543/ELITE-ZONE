@@ -1088,6 +1088,16 @@ class EmbedBuilder:
         return None
     
     @staticmethod
+    def clean_description(text: str) -> str:
+        """تنظيف الوصف من النصوص الروسية والشوائب"""
+        if not text:
+            return text
+        # استبدال كلمة запасية الروسية
+        text = text.replace('запасية', 'احتياطية')
+        # إزالة أي حروف سيريلية أخرى إذا وجدت
+        return text
+
+    @staticmethod
     def item_embed(item: dict, translated_desc: str = None) -> discord.Embed:
         """إنشاء Embed لعنصر من اللعبة - الاسم إنجليزي والباقي عربي"""
         # استخراج الاسم - الإنجليزي
@@ -1105,7 +1115,7 @@ class EmbedBuilder:
         
         # استخدم الوصف المترجم لو موجود
         if translated_desc:
-            description = translated_desc
+            description = EmbedBuilder.clean_description(translated_desc)
         else:
             # استخراج الوصف الأصلي
             description = None
@@ -1115,7 +1125,7 @@ class EmbedBuilder:
                     description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
                 else:
                     description = str(desc_val)
-            description = description or 'لا يوجد وصف'
+            description = EmbedBuilder.clean_description(description or 'لا يوجد وصف')
         
         embed = discord.Embed(
             title=f"📦 {name}",
@@ -1597,8 +1607,19 @@ async def on_message(message: discord.Message):
             bot.questions_answered += 1
             return
     
+    # تصحيح أخطاء إملائية شائعة
+    typo_corrections = {
+        'have': 'heavy',
+        'heve': 'heavy',
+        'hevy': 'heavy',
+        'ligh': 'light',
+        'lit': 'light',
+        'complx': 'complex',
+        'cmplex': 'complex'
+    }
+    
     english_words = re.findall(r'[a-zA-Z_]+', content)
-    english_words_lower = [w.lower() for w in english_words]
+    english_words_lower = [typo_corrections.get(w.lower(), w.lower()) for w in english_words]
     search_query = question
     main_word = None
     if (is_crafting_question or is_location_question or is_obtain_question) and english_words_lower:
@@ -1755,8 +1776,14 @@ async def on_message(message: discord.Message):
             
             if use_ai:
                 ai_context_parts = []
+                # إضافة العنصر الأساسي
                 name_for_ai = bot.search_engine.extract_name(item)
-                ai_context_parts.append(f"الآيتم: {name_for_ai}")
+                ai_context_parts.append(f"الآيتم الأساسي: {name_for_ai}")
+                
+                # لو كان بحث عائلة أسلحة، نضيف الباقين للسياق
+                if is_obtain_question and gun_parts_family_query:
+                     ai_context_parts.append("تنبيه: تم عرض عائلة Gun Parts كاملة (Light, Heavy, Complex).")
+
                 ai_context_parts.append("تنبيه للنظام: المستخدم رأى بطاقة المعلومات الرسمية (الندرة، السعر، الوصف، الموقع، الكرافت).")
                 ai_context_parts.append("مهم: لا تكرر هذه المعلومات أبداً. لا تضع قوائم.")
                 ai_context_parts.append("المطلوب: قدم نصيحة استراتيجية ذكية ومختصرة (سطرين) فقط إذا كان هناك فائدة إضافية غير موجودة في الداتا.")
