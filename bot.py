@@ -1507,7 +1507,7 @@ async def on_message(message: discord.Message):
     if question.startswith('دليل '):
         question = question[5:]
     
-    crafting_keywords = ['ادوات', 'أدوات', 'تصنع', 'تسوي', 'تصنيع', 'recipe', 'craft', 'مكونات', 'مخطط']
+    crafting_keywords = ['ادوات', 'أدوات', 'تصنع', 'تسوي', 'تصنيع', 'recipe', 'craft', 'مكونات', 'مخطط', 'متطلبات', 'متطلباته', 'متطلباتها']
     is_crafting_question = any(keyword in content_lower for keyword in crafting_keywords)
     
     location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
@@ -1573,12 +1573,18 @@ async def on_message(message: discord.Message):
                 ai_context_parts = []
                 name_for_ai = bot.search_engine.extract_name(item)
                 ai_context_parts.append(f"الآيتم: {name_for_ai}")
+                ai_context_parts.append("تنبيه للنظام: المستخدم رأى بالفعل بطاقة المعلومات الكاملة (الدروب، الموقع، الوصف) من قاعدة البيانات.")
+                ai_context_parts.append("مهم جداً: لا تكرر قائمة العناصر أو الدروب أو المعلومات الموجودة في البطاقة أبداً.")
+                ai_context_parts.append("لا ترسل إيموجيات قوائم أو تكرر المحتوى.")
+                ai_context_parts.append("المطلوب: قدم فقط نصيحة استراتيجية ذكية ومختصرة (سطرين كحد أقصى) عن كيفية القتال أو الاستخدام الأمثل.")
+                
                 if is_obtain_question:
-                    ai_context_parts.append("السؤال عن طرق الحصول أو أفضل طريقة للفارم.")
+                    ai_context_parts.append("السؤال عن استراتيجية الحصول.")
                 if is_crafting_question:
-                    ai_context_parts.append("السؤال عن مكونات التصنيع أو نصائح للصناعة.")
+                    ai_context_parts.append("السؤال عن نصائح التصنيع.")
                 if is_location_question:
-                    ai_context_parts.append("السؤال عن أماكن الوجود أو السبون.")
+                    ai_context_parts.append("السؤال عن كيفية الوصول للموقع.")
+
                 ai_context = " | ".join(ai_context_parts)
                 await ask_ai_and_reply(
                     message,
@@ -1747,6 +1753,20 @@ async def on_message(message: discord.Message):
                     map_embed = EmbedBuilder.map_embed(str(location), item)
                     await message.channel.send(embed=map_embed)
             
+            if use_ai:
+                ai_context_parts = []
+                name_for_ai = bot.search_engine.extract_name(item)
+                ai_context_parts.append(f"الآيتم: {name_for_ai}")
+                ai_context_parts.append("تنبيه للنظام: المستخدم رأى بطاقة المعلومات الرسمية (الندرة، السعر، الوصف، الموقع، الكرافت).")
+                ai_context_parts.append("مهم: لا تكرر هذه المعلومات أبداً. لا تضع قوائم.")
+                ai_context_parts.append("المطلوب: قدم نصيحة استراتيجية ذكية ومختصرة (سطرين) فقط إذا كان هناك فائدة إضافية غير موجودة في الداتا.")
+                
+                ai_context = " | ".join(ai_context_parts)
+                await ask_ai_and_reply(
+                    message,
+                    f"{ai_context}\n\nسؤال اللاعب: {question}"
+                )
+
             name = bot.search_engine.extract_name(item)
             bot.context_manager.set_context(message.author.id, name, item)
             
@@ -1790,13 +1810,214 @@ async def on_message(message: discord.Message):
 
 
 async def ask_ai_and_reply(message: discord.Message, question: str):
-    """سؤال الـ AI والرد"""
     thinking_msg = await message.reply("🔍 أبحث لك...")
     
     context = ""
     user_context = bot.context_manager.get_context(message.author.id)
     if user_context:
         context = f"المستخدم كان يسأل عن: {user_context['item']}"
+    
+    q_lower = question.lower()
+    
+    expedition_keywords = [
+        'expedition project',
+        'expedition',
+        'البروجيكت',
+        'البروجكت',
+        'بروجيكت الاكسبديشن',
+        'بروجكت الاكسبديشن',
+        'بروجيكت الإكسبيديشن',
+        'بروجكت الإكسبيديشن'
+    ]
+    if any(k in q_lower for k in expedition_keywords):
+        expedition_context = (
+            "معلومة رسمية عن Expedition Project في ARC Raiders: "
+            "ينفتح عند ليفل 20 كنظام يعيد تقدم الرايدر بشكل اختياري. "
+            "كل دورة تستمر ثمانية أسابيع؛ سبعة أسابيع للتحضير والأسبوع الثامن لإنهاء البروجيكت. "
+            "يعيد الليفل والمهارات والـ XP والإنفنتوري وتقدم التصنيع، "
+            "ويحافظ على الكوزمِتكس والمشتريات وRaider Tokens وCred وتقدم Raider Decks والكودكس والخرائط "
+            "وبونسات الإكسبيديشن من الرنات السابقة. "
+            "إنهاء البروجيكت يعطي جوائز تجميلية دائمة وبفات حساب للمواسم التالية."
+        )
+        if context:
+            context = context + " | " + expedition_context
+        else:
+            context = expedition_context
+    
+    game_info_keywords = [
+        'arc raiders',
+        'arc raider',
+        'اركرين',
+        'آرك ريدرز',
+        'عن اللعبة',
+        'وش هي arc raiders',
+        'ما هي arc raiders'
+    ]
+    if any(k in q_lower for k in game_info_keywords):
+        game_info_context = (
+            "ARC Raiders هي لعبة مغامرات استخراج جماعية تدور على أرض مستقبلية مدمرة، "
+            "تواجه فيها البشرية قوة ميكانيكية غامضة اسمها ARC. "
+            "تلعب كرائدر يطلع لسطح الأرض لجمع الموارد وإنهاء المهمات والرجوع سالماً بالغنائم، "
+            "مع إمكانية التعاون أو التنافس مع ريدرز آخرين."
+        )
+        if context:
+            context = context + " | " + game_info_context
+        else:
+            context = game_info_context
+    
+    arc_force_keywords = [
+        'arc نفسها',
+        'قوة arc',
+        'آرك نفسها',
+        'الآرك',
+        'arc machines'
+    ]
+    if any(k in q_lower for k in arc_force_keywords):
+        arc_force_context = (
+            "ARC هي قوة ميكانيكية غامضة دمّرت العالم، "
+            "تتضمن آليّات صغيرة مثل Ticks وSnitches وصولاً إلى زعماء كبار من نوع Queens."
+        )
+        if context:
+            context = context + " | " + arc_force_context
+        else:
+            context = arc_force_context
+    
+    speranza_keywords = [
+        'speranza',
+        'سبيرانزا',
+        'سبرنزا',
+        'المدينة تحت الأرض',
+        'الملجأ'
+    ]
+    if any(k in q_lower for k in speranza_keywords):
+        speranza_context = (
+            "Speranza هي مستوطنة تحت الأرض تعتبر مركز آمن للبشر بعيداً عن تهديد ARC على السطح، "
+            "وفيها ترجع بعد المهمات لتستلم المكافآت وتتعامل مع التجار وتطوّر شخصيتك ومساحتك الخاصة."
+        )
+        if context:
+            context = context + " | " + speranza_context
+        else:
+            context = speranza_context
+    
+    workshop_keywords = [
+        'workshop',
+        'الوركشوب',
+        'الورشة',
+        'ورشة التصنيع',
+        'تطوير الاسلحة',
+        'ترقية الاسلحة'
+    ]
+    if any(k in q_lower for k in workshop_keywords):
+        workshop_context = (
+            "الـ Workshop هو المكان اللي تطور فيه العتاد والأسلحة، "
+            "وتصلحها وتفتح وصفات تصنيع جديدة. "
+            "تقدر بعد تطور الورشة نفسها عشان تفتح تجهيزات وأدوات أقوى."
+        )
+        if context:
+            context = context + " | " + workshop_context
+        else:
+            context = workshop_context
+    
+    traders_keywords = [
+        'traders',
+        'trader',
+        'التجار',
+        'تاجر',
+        'التاجر'
+    ]
+    if any(k in q_lower for k in traders_keywords):
+        traders_context = (
+            "التُجّار في Speranza شخصيات مهمة يقدمون مهمات تحكي قصص من الـ Rust Belt، "
+            "ويعطونك مكافآت على مساعدتهم، بالإضافة لبيع وشراء الأغراض منك."
+        )
+        if context:
+            context = context + " | " + traders_context
+        else:
+            context = traders_context
+    
+    scrappy_keywords = [
+        'scrappy',
+        'الديك',
+        'ديكي',
+        'rooster',
+        'الديك المساعد'
+    ]
+    if any(k in q_lower for k in scrappy_keywords):
+        scrappy_context = (
+            "Scrappy هو رفيقك الديك اللي يساعدك يجمع الأغراض، "
+            "وله سلوك أنه يلقط اللوت لك حتى لو خسرت، "
+            "وتقدر تدربه وتعطيه كوزمِتكس خاصة فيه."
+        )
+        if context:
+            context = context + " | " + scrappy_context
+        else:
+            context = scrappy_context
+    
+    rust_belt_keywords = [
+        'rust belt',
+        'دام باتلجراوندز',
+        'dam battlegrounds',
+        'buried city',
+        'spaceport',
+        'blue gate',
+        'stella montis'
+    ]
+    if any(k in q_lower for k in rust_belt_keywords):
+        rust_belt_context = (
+            "مناطق الاستكشاف اسمها Rust Belt، "
+            "وتشمل Dam Battlegrounds (غابات ومستَنقعات ومرافق أبحاث)، "
+            "وBuried City (مدينة منهارة مغطاة بالرمل)، "
+            "وSpaceport (منشأة إطلاق قديمة)، "
+            "وBlue Gate (جبال وأنفاق ومدن ومجمعات تحت الأرض). "
+            "وفيه إشاعة عن منطقة اسمها Stella Montis لكن الوصول لها غير معروف."
+        )
+        if context:
+            context = context + " | " + rust_belt_context
+        else:
+            context = rust_belt_context
+    
+    specs_keywords = [
+        'متطلبات التشغيل',
+        'متطلبات اللعبة',
+        'المواصفات المطلوبة',
+        'specs',
+        'requirements',
+        'minimum specs',
+        'recommended specs'
+    ]
+    if any(k in q_lower for k in specs_keywords):
+        specs_context = (
+            "متطلبات ARC Raiders على البي سي: "
+            "الحد الأدنى تقريباً Windows 10 64-bit مع معالج i5-6600K أو Ryzen 5 1600، "
+            "و12GB رام وكرت مثل GTX 1050 Ti أو RX 580، وDirectX 12. "
+            "الموصى به i5-9600K أو Ryzen 5 3600، و16GB رام، "
+            "وكرت مثل RTX 2070 أو RX 5700 XT."
+        )
+        if context:
+            context = context + " | " + specs_context
+        else:
+            context = specs_context
+    
+    ping_keywords = [
+        'ping system',
+        'البنق',
+        'البينق',
+        'ping',
+        'نظام البينق',
+        'نظام العلامات',
+        'كيف أعلِّم على الأعداء',
+        'مارك'
+    ]
+    if any(k in q_lower for k in ping_keywords):
+        ping_context = (
+            "نظام الـ Ping يسمح لك تعلم على اللاعبين أو ARC أو الأغراض أو المواقع، "
+            "باستخدام زر الماوس الأوسط على البي سي، أو R1/RT على البلايستيشن والإكس بوكس، "
+            "وتقدر تعدّل الأزرار من الإعدادات."
+        )
+        if context:
+            context = context + " | " + ping_context
+        else:
+            context = ping_context
     
     ai_result = await bot.ai_manager.ask_ai(question, context)
     
