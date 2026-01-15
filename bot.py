@@ -995,6 +995,39 @@ class EmbedBuilder:
         embed.set_footer(text=f"🤖 {BOT_NAME}")
         return embed
 
+    @staticmethod
+    def error(title: str, description: str) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"❌ {title}",
+            description=description,
+            color=COLORS["error"],
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
+    
+    @staticmethod
+    def warning(title: str, description: str) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"⚠️ {title}",
+            description=description,
+            color=COLORS["warning"],
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
+    
+    @staticmethod
+    def info(title: str, description: str) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"ℹ️ {title}",
+            description=description,
+            color=COLORS["info"],
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
+
 # ═══════════════════════════════════════════════════════════════
 # أزرار التقييم - Feedback Buttons
 # ═══════════════════════════════════════════════════════════════
@@ -1032,39 +1065,6 @@ class FeedbackView(discord.ui.View):
 async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
     view = FeedbackView(message.author.id, message.content, getattr(embed, "title", "") or "")
     return await message.reply(embed=embed, view=view)
-    
-    @staticmethod
-    def error(title: str, description: str) -> discord.Embed:
-        embed = discord.Embed(
-            title=f"❌ {title}",
-            description=description,
-            color=COLORS["error"],
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text=f"🤖 {BOT_NAME}")
-        return embed
-    
-    @staticmethod
-    def warning(title: str, description: str) -> discord.Embed:
-        embed = discord.Embed(
-            title=f"⚠️ {title}",
-            description=description,
-            color=COLORS["warning"],
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text=f"🤖 {BOT_NAME}")
-        return embed
-    
-    @staticmethod
-    def info(title: str, description: str) -> discord.Embed:
-        embed = discord.Embed(
-            title=f"ℹ️ {title}",
-            description=description,
-            color=COLORS["info"],
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text=f"🤖 {BOT_NAME}")
-        return embed
     
     @staticmethod
     def extract_field(item: dict, field: str) -> str:
