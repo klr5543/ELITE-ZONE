@@ -1190,6 +1190,83 @@ class EmbedBuilder:
         embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
         return embed
 
+    @staticmethod
+    def concise_item_response(item: dict, intent: str = None) -> discord.Embed:
+        """إنشاء رد مختصر وطبيعي يعتمد على نية السؤال (مثلاً: 'requirements', 'location', 'definition', 'loot')."""
+        name = None
+        for field in ['name', 'title', 'displayName', 'nameKey']:
+            if field in item and isinstance(item[field], str):
+                name = item[field]
+                break
+        name = name or 'غير معروف'
+
+        # Default short description
+        desc = item.get('description') or item.get('shortDescription') or ''
+        if isinstance(desc, dict):
+            desc = desc.get('en') or next(iter(desc.values()), '')
+
+        # Crafting / requirements intent
+        if intent == 'requirements' or 'recipe' in item or 'blueprint' in (item.get('type') or '').lower():
+            recipe = item.get('recipe') or item.get('components') or {}
+            if isinstance(recipe, dict) and recipe:
+                parts = []
+                for k, v in recipe.items():
+                    parts.append(f"{v}× {k}")
+                body = '، '.join(parts)
+                text = f"لتصنيع {name} تحتاج: {body}."
+            else:
+                # check blueprint link
+                bp = item.get('blueprint') or item.get('craftBench')
+                if bp:
+                    text = f"{name} يَصنع على: {bp}."
+                else:
+                    text = f"لا توجد معلومات تصنيع مفصّلة لـ {name} في الداتا."
+
+        # Loot / obtain intent
+        elif intent == 'loot' or item.get('drops'):
+            drops = item.get('drops') or []
+            if drops:
+                text = f"يمكن الحصول على {name} من: {', '.join(drops[:6])}"
+            else:
+                found_in = item.get('foundIn') or item.get('location')
+                if found_in:
+                    text = f"يمكن العثور على {name} في: {found_in}."
+                else:
+                    text = f"لا توجد بيانات مكانية واضحة للحصول على {name}."
+
+        # Location / zone intent
+        elif intent == 'location' or item.get('location'):
+            location = item.get('location') or item.get('foundIn')
+            text = f"{name} يُوجد عادة في: {location}." if location else f"لا توجد بيانات مكانية واضحة لـ {name}."
+
+        # Definition or fallback
+        else:
+            short = desc.strip()[:300]
+            if short:
+                text = short
+            else:
+                # fallback to simple fields
+                rarity = item.get('rarity')
+                itype = item.get('type')
+                parts = []
+                if itype:
+                    parts.append(str(itype))
+                if rarity:
+                    parts.append(str(rarity))
+                if parts:
+                    text = f"{name} — {' | '.join(parts)}"
+                else:
+                    text = f"معلومات عن {name} غير متوفرة بالتفصيل."
+
+        embed = discord.Embed(
+            title=f"📦 {name}",
+            description=text,
+            color=COLORS['primary'],
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
+        return embed
+
 # ═══════════════════════════════════════════════════════════════
 # أزرار التقييم - Feedback Buttons
 # ═══════════════════════════════════════════════════════════════
@@ -1726,9 +1803,12 @@ async def on_message(message: discord.Message):
                     if translated_desc and translated_desc != 'لا يوجد وصف':
                         obtain_info.append(f"📝 {translated_desc[:150]}")
                 custom_desc = "\n".join(obtain_info)
-                embed = EmbedBuilder.item_embed(item, custom_desc)
+                # concise response for obtain/location questions
+                intent = 'loot' if is_obtain_question else 'location' if is_location_question else None
+                embed = EmbedBuilder.concise_item_response(item, intent=intent)
             else:
-                embed = EmbedBuilder.item_embed(item, translated_desc)
+                # concise definition / fallback
+                embed = EmbedBuilder.concise_item_response(item, intent=None)
             drops = item.get('drops') or []
             if drops and isinstance(drops, list):
                 drop_lines = []
@@ -2051,9 +2131,10 @@ async def on_message(message: discord.Message):
                     if translated_desc and translated_desc != 'لا يوجد وصف':
                         obtain_info.append(f"\n📝 {translated_desc[:150]}")
                 custom_desc = "\n\n".join(obtain_info)
-                embed = EmbedBuilder.item_embed(item, custom_desc)
+                intent = 'loot' if is_obtain_question else 'location' if is_location_question else None
+                embed = EmbedBuilder.concise_item_response(item, intent=intent)
             else:
-                embed = EmbedBuilder.item_embed(item, translated_desc)
+                embed = EmbedBuilder.concise_item_response(item, intent=None)
 
             if is_crafting_question:
                 recipe = item.get('recipe')
@@ -2086,7 +2167,7 @@ async def on_message(message: discord.Message):
                     extra_translated_desc = None
                     if extra_description and extra_description != 'لا يوجد وصف':
                         extra_translated_desc = await bot.ai_manager.translate_to_arabic(extra_description)
-                    extra_embed = EmbedBuilder.item_embed(extra_item, extra_translated_desc)
+                    extra_embed = EmbedBuilder.concise_item_response(extra_item, intent='loot')
                     extra_obtain_lines = []
                     found_in_extra = extra_item.get('foundIn')
                     if found_in_extra:
