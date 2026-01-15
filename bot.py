@@ -40,7 +40,7 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
 # Bot Settings
 BOT_NAME = "دليل"
-BOT_VERSION = "2.0.0"
+BOT_VERSION = "2.0.1"
 
 # قاموس عربي-إنجليزي للكلمات الشائعة
 ARABIC_TO_ENGLISH = {
