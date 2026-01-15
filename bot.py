@@ -1117,11 +1117,22 @@ class EmbedBuilder:
         if not name:
             name = 'غرض بدون اسم'
 
-        # إذا لم يوجد مكان واضح للغرض، أعطِ رد منطقي
-        if intent == 'loot' and not (item.get('drops') or item.get('foundIn') or item.get('location')):
-            text = f"لا يوجد مكان ثابت أو معروف للحصول على هذا الغرض في اللعبة. جرب البحث في مناطق اللوت الصناعية أو اسأل اللاعبين عن تجاربهم."
-        elif intent == 'location' and not (item.get('location') or item.get('foundIn')):
-            text = f"لا يوجد مكان محدد لهذا الغرض في الداتا. غالبًا يظهر في مناطق اللوت أو عند الأعداء."
+        # منطق الرد الذكي حسب نوع السؤال
+        if intent == 'loot':
+            drops = item.get('drops') or []
+            found_in = item.get('foundIn') or item.get('location')
+            if drops:
+                text = f"يمكنك الحصول على {name} من: {', '.join(drops[:6])} وغيرها."
+            elif found_in:
+                text = f"غالبًا تجد {name} في منطقة: {found_in}."
+            else:
+                text = f"لا يوجد مكان ثابت أو طريقة محددة للحصول على {name}. جرب البحث في مناطق اللوت أو اسأل اللاعبين عن تجاربهم."
+        elif intent == 'location':
+            location = item.get('location') or item.get('foundIn')
+            if location:
+                text = f"غالبًا يوجد {name} في: {location}."
+            else:
+                text = f"لا يوجد مكان محدد لهذا الغرض في الداتا. غالبًا يظهر في مناطق اللوت أو عند الأعداء."
         
         if translated_desc:
             description = EmbedBuilder.clean_description(translated_desc)
