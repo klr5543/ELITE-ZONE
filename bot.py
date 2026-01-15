@@ -1111,7 +1111,17 @@ class EmbedBuilder:
             if 'id' in item and isinstance(item['id'], str):
                 name = item['id'].replace('_', ' ').title()
             else:
-                name = 'غرض غير محدد'
+                name = None
+
+        # إذا لم يوجد اسم، استخدم وصف منطقي في العنوان
+        if not name:
+            name = 'غرض بدون اسم'
+
+        # إذا لم يوجد مكان واضح للغرض، أعطِ رد منطقي
+        if intent == 'loot' and not (item.get('drops') or item.get('foundIn') or item.get('location')):
+            text = f"لا يوجد مكان ثابت أو معروف للحصول على هذا الغرض في اللعبة. جرب البحث في مناطق اللوت الصناعية أو اسأل اللاعبين عن تجاربهم."
+        elif intent == 'location' and not (item.get('location') or item.get('foundIn')):
+            text = f"لا يوجد مكان محدد لهذا الغرض في الداتا. غالبًا يظهر في مناطق اللوت أو عند الأعداء."
         
         if translated_desc:
             description = EmbedBuilder.clean_description(translated_desc)
