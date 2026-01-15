@@ -1841,7 +1841,7 @@ async def on_message(message: discord.Message):
                 translated_desc = await bot.ai_manager.translate_to_arabic(description)
             if is_obtain_question or is_location_question:
                 obtain_info = []
-                found_in = item.get('foundIn)
+                found_in = item.get('foundIn')
                 if found_in:
                     obtain_info.append(f"📍 المنطقة: {found_in}")
                 location_field = item.get('location') or item.get('spawn_location') or item.get('map')
