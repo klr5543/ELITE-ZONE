@@ -42,7 +42,7 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 BOT_NAME = "دليل"
 BOT_VERSION = "2.0.1"
 
-AI_MODE = os.getenv("AI_MODE", "ai_only").lower()
+AI_MODE = os.getenv("AI_MODE", "hybrid").lower()
 
 DOC_SITES = [
     "https://arcraiders.wiki/wiki/{slug}",
@@ -2054,9 +2054,6 @@ async def on_message(message: discord.Message):
     )
     if gun_parts_family_query:
         search_query = "gun parts"
-    
-    ai_configured = is_ai_configured()
-    use_ai = should_use_ai(question) and ai_configured
     
     results = bot.search_engine.search(search_query, limit=5 if (is_crafting_question or is_obtain_question or is_location_question) else 1)
     
