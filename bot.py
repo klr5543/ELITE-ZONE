@@ -2165,6 +2165,14 @@ async def on_message(message: discord.Message):
                 f"{db_summary}"
             )
             
+            extra_docs = await fetch_doc_snippet(item_name_display or question)
+            if extra_docs:
+                ai_context = (
+                    ai_context
+                    + "\n\nمعلومات إضافية من ويكي ARC Raiders (قد تكون أحدث من الداتا أو أكثر تفصيلاً): "
+                    + extra_docs
+                )
+            
             style_hint = ""
             if is_obtain_question or is_location_question:
                 style_hint = (
