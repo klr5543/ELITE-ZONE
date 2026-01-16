@@ -1672,6 +1672,7 @@ async def on_message(message: discord.Message):
         if message.guild and message.guild.id != ALLOWED_GUILD_ID:
             return
         
+        # إعادة شرط القناة المسموحة لحماية الشات
         if message.channel.id != ALLOWED_CHANNEL_ID:
             print("تم تجاهل الرسالة لأنها ليست في القناة المسموحة.")
             await bot.process_commands(message)
