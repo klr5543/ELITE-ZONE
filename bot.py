@@ -2492,9 +2492,10 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
     await thinking_msg.delete()
     
     if ai_result['success']:
-        embed = EmbedBuilder.success(
-            "إجابة",
-            ai_result['answer']
+        embed = discord.Embed(
+            description=ai_result['answer'],
+            color=COLORS["success"],
+            timestamp=datetime.now()
         )
         embed.set_footer(text=f"🤖 {BOT_NAME}")
     else:
