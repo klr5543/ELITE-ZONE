@@ -2050,24 +2050,69 @@ async def on_message(message: discord.Message):
                 else:
                     description = str(desc_val)
             
-            translated_desc = None
-            if description and description != 'لا يوجد وصف':
-                translated_desc = await bot.ai_manager.translate_to_arabic(description)
+            item_name_display = bot.search_engine.extract_name(item)
+            item_type = EmbedBuilder.extract_field(item, 'type') or ''
+            rarity = EmbedBuilder.extract_field(item, 'rarity') or ''
+            found_in = item.get('foundIn') or ''
+            location_field = item.get('location') or item.get('spawn_location') or item.get('map')
+            if isinstance(location_field, dict):
+                location_field = location_field.get('en') or location_field.get('ar') or list(location_field.values())[0]
+            spawn_rate = item.get('spawnRate') or item.get('spawn_rate') or ''
+            price = item.get('price') or item.get('value') or ''
+            recipe = item.get('recipe') if isinstance(item.get('recipe'), dict) else None
+            drops_list = item.get('drops') if isinstance(item.get('drops'), list) else []
+            traders = item.get('traders') or item.get('soldBy') or []
 
-            embed = EmbedBuilder.item_embed(item, translated_desc)
+            context_parts = []
+            if item_name_display:
+                context_parts.append(f"الاسم: {item_name_display}")
+            if description:
+                context_parts.append(f"الوصف: {description}")
+            if item_type:
+                context_parts.append(f"النوع: {item_type}")
+            if rarity:
+                context_parts.append(f"الندرة: {rarity}")
+            if found_in:
+                context_parts.append(f"المنطقة العامة: {found_in}")
+            if location_field and location_field != found_in:
+                context_parts.append(f"الموقع التفصيلي: {location_field}")
+            if spawn_rate:
+                context_parts.append(f"نسبة الظهور (إن وجدت في الداتا): {spawn_rate}")
+            if price:
+                context_parts.append(f"السعر في الداتا: {price}")
+            if recipe:
+                recipe_text = ", ".join(f"{k}: {v}" for k, v in recipe.items() if v is not None)
+                if recipe_text:
+                    context_parts.append(f"وصفة التصنيع: {recipe_text}")
+            if drops_list:
+                context_parts.append(f"يسقط من عدد أعداء/بوس مذكور في الداتا: {len(drops_list)}")
+            if traders:
+                context_parts.append("متوفر لدى بعض التجار في الداتا.")
 
-            if is_crafting_question:
-                recipe = item.get('recipe')
-                if isinstance(recipe, dict) and recipe:
-                    lines = []
-                    for key, amount in recipe.items():
-                        if amount is None:
-                            continue
-                        name = str(key).replace('_', ' ')
-                        lines.append(f"- {name}: {amount}")
-                    if lines:
-                        embed.add_field(name="مكونات التصنيع", value="\n".join(lines), inline=False)
-            
+            db_summary = " | ".join(context_parts) if context_parts else "لا توجد بيانات تفصيلية عن هذا الغرض في الداتا."
+
+            ai_question = (
+                f"سؤال اللاعب: {question}\n\n"
+                "استخدم فقط المعلومات التالية من داتا ARC Raiders عن هذا الغرض، "
+                "ولا تضف أماكن أو نسب سبون أو أرقام غير موجودة فيها:\n"
+                f"{db_summary}\n\n"
+                "اكتب إجابة واحدة قصيرة وواضحة بالعربي تشرح للاعب المطلوب حسب السؤال "
+                "(مثلاً أين يجد القطعة أو كيف تُستخدم) بدون قوائم طويلة."
+            )
+
+            ai_result = await bot.ai_manager.ask_ai(ai_question)
+
+            if ai_result['success']:
+                embed = EmbedBuilder.success(
+                    item_name_display or "إجابة",
+                    ai_result['answer']
+                )
+            else:
+                embed = EmbedBuilder.error(
+                    "عذراً",
+                    "ما قدرت ألقى جواب واضح حتى بعد استخدام الداتا والذكاء الاصطناعي."
+                )
+
             reply = await reply_with_feedback(message, embed)
             if is_obtain_question and gun_parts_family_query:
                 extra_results = []
@@ -2115,26 +2160,6 @@ async def on_message(message: discord.Message):
                     
                     map_embed = EmbedBuilder.map_embed(str(location), item)
                     await message.channel.send(embed=map_embed)
-            
-            if use_ai:
-                ai_context_parts = []
-                # إضافة العنصر الأساسي
-                name_for_ai = bot.search_engine.extract_name(item)
-                ai_context_parts.append(f"الآيتم الأساسي: {name_for_ai}")
-                
-                # لو كان بحث عائلة أسلحة، نضيف الباقين للسياق
-                if is_obtain_question and gun_parts_family_query:
-                     ai_context_parts.append("تنبيه: تم عرض عائلة Gun Parts كاملة (Light, Heavy, Complex).")
-
-                ai_context_parts.append("تنبيه للنظام: المستخدم رأى بطاقة المعلومات الرسمية (الندرة، السعر، الوصف، الموقع، الكرافت).")
-                ai_context_parts.append("مهم: لا تكرر هذه المعلومات أبداً. لا تضع قوائم.")
-                ai_context_parts.append("المطلوب: قدم نصيحة استراتيجية ذكية ومختصرة (سطرين) فقط إذا كان هناك فائدة إضافية غير موجودة في الداتا.")
-                
-                ai_context = " | ".join(ai_context_parts)
-                await ask_ai_and_reply(
-                    message,
-                    f"{ai_context}\n\nسؤال اللاعب: {question}"
-                )
 
             name = bot.search_engine.extract_name(item)
             bot.context_manager.set_context(message.author.id, name, item)
