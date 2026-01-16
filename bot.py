@@ -1141,9 +1141,9 @@ class EmbedBuilder:
             description = EmbedBuilder.clean_description(description or 'لا يوجد وصف')
         
         minimal_mode = False
-        if translated_desc:
-            td = str(translated_desc)
-            if any(x in td for x in ["المنطقة:", "الموقع:", "نسبة الظهور", "التجار", "السعر"]):
+        if description:
+            td = str(description)
+            if any(x in td for x in ["المنطقة:", "الموقع:", "المنطقة العامة:", "نسبة الظهور", "التجار", "السعر"]):
                 minimal_mode = True
         
         embed = discord.Embed(
