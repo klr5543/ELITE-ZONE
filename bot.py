@@ -1541,12 +1541,22 @@ class DaleelBot(commands.Bot):
         return f"{hours} ساعة, {minutes} دقيقة, {seconds} ثانية"
 
 # إنشاء البوت
+print("بدء تحميل البيانات...")
+db_manager = DatabaseManager()
+db_manager.load_all()
+print("تم تحميل البيانات.")
+
+print("بدء تهيئة DaleelBot...")
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.members = True
-
 bot = DaleelBot(intents=intents)
+print("تم تهيئة DaleelBot.")
+
+if __name__ == "__main__":
+    print("سيتم تشغيل البوت الآن...")
+    bot.run(DISCORD_TOKEN)
 
 # ═══════════════════════════════════════════════════════════════
 # الأوامر - Commands
