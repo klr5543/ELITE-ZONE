@@ -1780,43 +1780,68 @@ async def on_message(message: discord.Message):
             translated_desc = None
             if description and description != 'لا يوجد وصف':
                 translated_desc = await bot.ai_manager.translate_to_arabic(description)
-            if is_obtain_question or is_location_question:
-                obtain_info = []
-                found_in = item.get('foundIn')
-                if found_in:
-                    obtain_info.append(f"📍 المنطقة: {found_in}")
-                location_field = item.get('location') or item.get('spawn_location') or item.get('map')
-                if location_field and location_field != found_in:
-                    if isinstance(location_field, dict):
-                        location_field = location_field.get('en') or location_field.get('ar') or list(location_field.values())[0]
-                    obtain_info.append(f"🗺️ الموقع: {location_field}")
-                spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
-                if spawn_rate:
-                    obtain_info.append(f"📊 نسبة الظهور: {spawn_rate}%")
-                craft_bench = item.get('craftBench')
-                recipe = item.get('recipe') if isinstance(item.get('recipe'), dict) else None
-                if craft_bench or recipe:
-                    if craft_bench:
-                        obtain_info.append(f"🔨 التصنيع: {craft_bench}")
-                    else:
-                        obtain_info.append("🔨 التصنيع: متاح (شوف تفاصيل الوصفة)")
-                drops_list = item.get('drops')
-                if isinstance(drops_list, list) and len(drops_list) > 0:
-                    obtain_info.append(f"💀 يسقط من: {len(drops_list)} عدو/بوس")
-                traders = item.get('traders') or item.get('soldBy')
-                if traders:
-                    obtain_info.append("💰 التجار: متوفر للشراء")
-                price = item.get('price') or item.get('value')
-                if price:
-                    obtain_info.append(f"💵 السعر: {price}")
-                if not obtain_info:
-                    obtain_info.append("⚠️ معلومات المكان غير متوفرة في الداتا")
-                    if translated_desc and translated_desc != 'لا يوجد وصف':
-                        obtain_info.append(f"📝 {translated_desc[:150]}")
-                custom_desc = "\n".join(obtain_info)
-                embed = EmbedBuilder.item_embed(item, custom_desc)
+            
+            found_in = item.get('foundIn') or ''
+            location_field = item.get('location') or item.get('spawn_location') or item.get('map')
+            if isinstance(location_field, dict):
+                location_field = location_field.get('en') or location_field.get('ar') or list(location_field.values())[0]
+            spawn_rate = item.get('spawnRate') or item.get('spawn_rate') or ''
+            price = item.get('price') or item.get('value') or ''
+            drops_list = item.get('drops') if isinstance(item.get('drops'), list) else []
+            traders = item.get('traders') or item.get('soldBy') or []
+            
+            context_parts = []
+            name_for_ai = bot.search_engine.extract_name(item)
+            if name_for_ai:
+                context_parts.append(f"الاسم: {name_for_ai}")
+            if translated_desc:
+                context_parts.append(f"الوصف من الداتا: {translated_desc}")
+            if found_in:
+                context_parts.append(f"المنطقة العامة: {found_in}")
+            if location_field and location_field != found_in:
+                context_parts.append(f"الموقع التفصيلي: {location_field}")
+            if spawn_rate:
+                context_parts.append(f"نسبة الظهور في الداتا: {spawn_rate}")
+            if price:
+                context_parts.append(f"السعر في الداتا: {price}")
+            if drops_list:
+                context_parts.append(f"يسقط منها عدد قطع مذكورة في الداتا: {len(drops_list)}")
+            if traders:
+                context_parts.append("متوفرة عند بعض التجار في الداتا.")
+            
+            db_summary = " | ".join(context_parts) if context_parts else "لا توجد بيانات تفصيلية عن هذا العدو في الداتا."
+            
+            focus_instruction = ""
+            if is_location_question or is_obtain_question:
+                focus_instruction = "ركز على مكان ظهور THE QUEEN وطبيعة السبون وأفضل طريقة لمواجهتها."
             else:
-                embed = EmbedBuilder.item_embed(item, translated_desc)
+                focus_instruction = "اشرح بإيجاز من هي THE QUEEN وكيف يتعامل معها اللاعب."
+            
+            ai_context = (
+                "هذه بيانات من داتا ARC Raiders عن زعيم اسمه THE QUEEN. "
+                "استخدمها كسياق فقط ولا تكررها حرفياً، ولا تكتب قوائم طويلة.\n"
+                f"{db_summary}"
+            )
+            
+            ai_question = (
+                f"سؤال اللاعب: {question}\n\n"
+                f"{focus_instruction}\n"
+                "اكتب إجابة واحدة قصيرة وواضحة بالعربي، بدون قوائم طويلة."
+            )
+            
+            ai_result = await bot.ai_manager.ask_ai(ai_question, context=ai_context)
+            
+            if ai_result['success']:
+                embed = EmbedBuilder.success(
+                    name_for_ai or "THE QUEEN",
+                    ai_result['answer']
+                )
+            else:
+                embed = EmbedBuilder.error(
+                    "عذراً",
+                    "ما قدرت ألقى جواب واضح عن THE QUEEN حتى بعد استخدام الداتا والذكاء الاصطناعي."
+                )
+            
             drops = item.get('drops') or []
             if drops and isinstance(drops, list):
                 drop_lines = []
@@ -1832,35 +1857,18 @@ async def on_message(message: discord.Message):
                         drop_lines.append(f"- {drop_id}")
                 if drop_lines:
                     embed.add_field(
-                        name="القطع التي تسقط منها",
+                        name="القطع التي تسقط منها (من الداتا)",
                         value="\n".join(drop_lines),
                         inline=False
                     )
+            
+            img_url = EmbedBuilder.get_image_url(item)
+            if img_url:
+                embed.set_thumbnail(url=img_url)
+            
             reply = await reply_with_feedback(message, embed)
-            if use_ai and (is_crafting_question or is_obtain_question or is_location_question):
-                ai_context_parts = []
-                name_for_ai = bot.search_engine.extract_name(item)
-                ai_context_parts.append(f"الآيتم: {name_for_ai}")
-                ai_context_parts.append("تنبيه للنظام: المستخدم رأى بالفعل بطاقة المعلومات الكاملة (الدروب، الموقع، الوصف) من قاعدة البيانات.")
-                ai_context_parts.append("مهم جداً: لا تكرر قائمة العناصر أو الدروب أو المعلومات الموجودة في البطاقة أبداً.")
-                ai_context_parts.append("لا ترسل إيموجيات قوائم أو تكرر المحتوى.")
-                ai_context_parts.append("المطلوب: قدم فقط نصيحة استراتيجية ذكية ومختصرة (سطرين كحد أقصى) عن كيفية القتال أو الاستخدام الأمثل.")
-                
-                if is_obtain_question:
-                    ai_context_parts.append("السؤال عن استراتيجية الحصول.")
-                if is_crafting_question:
-                    ai_context_parts.append("السؤال عن نصائح التصنيع.")
-                if is_location_question:
-                    ai_context_parts.append("السؤال عن كيفية الوصول للموقع.")
-
-                ai_context = " | ".join(ai_context_parts)
-                await ask_ai_and_reply(
-                    message,
-                    f"{ai_context}\n\nسؤال اللاعب: {question}"
-                )
             name = bot.search_engine.extract_name(item)
             bot.context_manager.set_context(message.author.id, name, item)
-            # الأزرار تغني عن ردود ✅❌
             bot.questions_answered += 1
             return
     
@@ -2122,94 +2130,6 @@ async def on_message(message: discord.Message):
             has_recipe_data = bool(recipe)
             has_location_data = bool(found_in or location_field or spawn_rate or drops_list or traders)
 
-            if is_crafting_question and has_recipe_data:
-                embed = EmbedBuilder.item_embed(item, None)
-                reply = await reply_with_feedback(message, embed)
-                name = bot.search_engine.extract_name(item)
-                bot.context_manager.set_context(message.author.id, name, item)
-                bot.questions_answered += 1
-                return
-
-            if (is_obtain_question or is_location_question) and has_location_data:
-                obtain_sentences = []
-                base_name = item_name_display or bot.search_engine.extract_name(item)
-                
-                if found_in and price:
-                    obtain_sentences.append(f"{base_name} تلقاه غالباً في منطقة {found_in}، وسعره المقدر في الداتا حوالي {price}.")
-                elif found_in:
-                    obtain_sentences.append(f"{base_name} تلقاه غالباً في منطقة {found_in}.")
-                elif price:
-                    obtain_sentences.append(f"سعر {base_name} المقدر في الداتا حوالي {price}.")
-                
-                if location_field and location_field != found_in:
-                    obtain_sentences.append(f"الموقع التفصيلي حسب الداتا: {location_field}.")
-                if spawn_rate:
-                    obtain_sentences.append(f"معدل الظهور في الداتا تقريباً: {spawn_rate}.")
-                if traders:
-                    if isinstance(traders, list):
-                        trader_names = [str(t) for t in traders if t]
-                        if trader_names:
-                            obtain_sentences.append("يتوفر عند بعض التجار مثل: " + ", ".join(trader_names) + ".")
-                    else:
-                        obtain_sentences.append(f"يتوفر عند التاجر: {traders}.")
-                if drops_list:
-                    obtain_sentences.append(f"يسقط من أكثر من {len(drops_list)} عدو أو بوس مذكورين في الداتا.")
-
-                custom_desc = "\n".join(obtain_sentences) if obtain_sentences else None
-                embed = EmbedBuilder.item_embed(item, custom_desc)
-                reply = await reply_with_feedback(message, embed)
-
-                if is_obtain_question and gun_parts_family_query:
-                    extra_results = []
-                    for r in results[1:]:
-                        extra_item = r['item']
-                        extra_name = bot.search_engine.extract_name(extra_item).lower()
-                        if 'gun parts' in extra_name:
-                            extra_results.append(extra_item)
-                    for extra_item in extra_results:
-                        extra_description = None
-                        if 'description' in extra_item:
-                            desc_val = extra_item['description']
-                            if isinstance(desc_val, dict):
-                                extra_description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-                            else:
-                                extra_description = str(desc_val)
-                        extra_translated_desc = None
-                        if extra_description and extra_description != 'لا يوجد وصف':
-                            extra_translated_desc = await bot.ai_manager.translate_to_arabic(extra_description)
-                        extra_embed = EmbedBuilder.item_embed(extra_item, extra_translated_desc)
-                        extra_obtain_lines = []
-                        found_in_extra = extra_item.get('foundIn')
-                        if found_in_extra:
-                            extra_obtain_lines.append(f"- يوجد في: {found_in_extra}")
-                        craft_bench_extra = extra_item.get('craftBench')
-                        if craft_bench_extra:
-                            extra_obtain_lines.append(f"- يتصنع في: {craft_bench_extra}")
-                        if not is_crafting_question:
-                            recipe_extra = extra_item.get('recipe')
-                            if isinstance(recipe_extra, dict) and recipe_extra:
-                                extra_obtain_lines.append("- له وصفة تصنيع، شوف تفاصيل التصنيع")
-                        if extra_obtain_lines:
-                            extra_embed.add_field(
-                                name="طرق الحصول",
-                                value="\n".join(extra_obtain_lines),
-                                inline=False
-                            )
-                        await message.channel.send(embed=extra_embed)
-            
-                if is_location_question:
-                    location = item.get('location') or item.get('spawn_location') or item.get('map')
-                    if location:
-                        if isinstance(location, dict):
-                            location = location.get('en') or list(location.values())[0]
-                        map_embed = EmbedBuilder.map_embed(str(location), item)
-                        await message.channel.send(embed=map_embed)
-
-                name = bot.search_engine.extract_name(item)
-                bot.context_manager.set_context(message.author.id, name, item)
-                bot.questions_answered += 1
-                return
-
             context_parts = []
             if item_name_display:
                 context_parts.append(f"الاسم: {item_name_display}")
@@ -2227,7 +2147,7 @@ async def on_message(message: discord.Message):
                 context_parts.append(f"نسبة الظهور (إن وجدت في الداتا): {spawn_rate}")
             if price:
                 context_parts.append(f"السعر في الداتا: {price}")
-            if recipe and not is_crafting_question:
+            if recipe:
                 recipe_text = ", ".join(f"{k}: {v}" for k, v in recipe.items() if v is not None)
                 if recipe_text:
                     context_parts.append(f"وصفة التصنيع: {recipe_text}")
@@ -2239,8 +2159,8 @@ async def on_message(message: discord.Message):
             db_summary = " | ".join(context_parts) if context_parts else "لا توجد بيانات تفصيلية عن هذا الغرض في الداتا."
             
             ai_context = (
-                "هذه بيانات من داتا ARC Raiders عن الغرض المذكور، استخدمها كمصدر أساسي، "
-                "لكن مسموح لك تستفيد من معرفتك عن اللعبة وتضيف أماكن أو نصائح منطقية حتى لو ما كانت مكتوبة حرفياً في الداتا. "
+                "هذه بيانات من داتا ARC Raiders عن الغرض المذكور، استخدمها كسياق فقط، "
+                "ولا تكرر الجمل حرفياً، ومسموح تضيف خبرتك عن اللعبة أو تجارب اللاعبين. "
                 "لو حسيت المعلومة تقريبية أو مو مؤكدة، وضّح ذلك للاعب.\n"
                 f"{db_summary}"
             )
@@ -2258,6 +2178,9 @@ async def on_message(message: discord.Message):
                     item_name_display or "إجابة",
                     ai_result['answer']
                 )
+                img_url = EmbedBuilder.get_image_url(item)
+                if img_url:
+                    embed.set_thumbnail(url=img_url)
             else:
                 embed = EmbedBuilder.error(
                     "عذراً",
