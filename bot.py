@@ -1674,7 +1674,7 @@ async def on_message(message: discord.Message):
         
         # إعادة شرط القناة المسموحة لحماية الشات
         if message.channel.id != ALLOWED_CHANNEL_ID:
-            print("تم تجاهل الرسالة لأنها ليست في القناة المسموحة.")
+            print(f"تم تجاهل الرسالة لأنها ليست في القناة المسموحة. قناة الرسالة: {message.channel.id}, المسموح: {ALLOWED_CHANNEL_ID}")
             await bot.process_commands(message)
             return
         
@@ -1830,6 +1830,7 @@ async def on_message(message: discord.Message):
     is_queen_query = any(
         term in content_lower for term in ['queen', 'كوين', 'الكوين']
     )
+
     if is_queen_query:
         queen_candidates = [
             b for b in bot.database.bots
