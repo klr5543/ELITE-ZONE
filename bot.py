@@ -1,10 +1,12 @@
-# بوت "دليل" - Daleel Bot (single-file, مُحدّث نهائي)
+# بوت "دليل" - Daleel Bot (single-file, مُصلح لاستقرار الـ message handling)
 # ---------------------------------------------------------
 # انسخ هذا الملف كاملًا واستبدل به bot.py في مشروعك، ثم أعد التشغيل.
-# التغييرات الرئيسية:
-# - أي إجابة من AI تُقصَّر تلقائيًا إلى 1-2 جملة (دون فلسفة).
-# - handle_message_query يدعم commands.Context و discord.Interaction و discord.Message.
-# - بحث محلي، أزرار التفاصيل، أزرار تقييم، وإعادة تحميل بيانات.
+# هذا الإصدار يصحح مشاكل التعامل مع ثلاث أنواع من الـ context:
+# - commands.Context (أوامر prefix)
+# - discord.Interaction (سلاش)
+# - discord.Message (رسائل عادية في القناة)
+# ويضمن أن الردود تُرسل بطريقة آمنة لكل نوع — لا مزيد من AttributeError: 'Message' object has no attribute 'response'
+# كما يبقي اختصار إجابات AI إلى 1-2 جملة.
 # ---------------------------------------------------------
 
 import os
@@ -16,7 +18,7 @@ from pathlib import Path
 from functools import lru_cache
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 
 import discord
 from discord.ext import commands
@@ -49,7 +51,7 @@ ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
 BOT_NAME = "دليل"
-BOT_VERSION = "2.0.2"
+BOT_VERSION = "2.0.3"
 
 # -------------------------
 # Logging
@@ -116,7 +118,6 @@ def truncate_answer_to_sentences(text: str, max_sentences: int = 2) -> str:
     """قطع النص إلى أول N جمل (يعمل مع العربية والإنجليزية)."""
     if not text:
         return text
-    # split by sentence enders (., ?, !, Arabic question mark)
     parts = re.split(r'(?<=[\.\?\!؟])\s+', text.strip())
     if len(parts) <= max_sentences:
         return " ".join(parts).strip()
@@ -627,7 +628,7 @@ class FeedbackView(discord.ui.View):
 
     @discord.ui.button(label="إجابة صحيحة", style=discord.ButtonStyle.success, emoji="✅")
     async def feedback_ok(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("تم تسجيل: إجابة صحيحة ✅", ephemeral=True)
+        await interaction.response.send_message("تم ت��جيل: إجابة صحيحة ✅", ephemeral=True)
         await self._send_log(interaction, "صحيحة")
 
     @discord.ui.button(label="إجابة خاطئة", style=discord.ButtonStyle.danger, emoji="❌")
@@ -636,8 +637,14 @@ class FeedbackView(discord.ui.View):
         await self._send_log(interaction, "خاطئة")
 
 async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
-    view = FeedbackView(message.author.id, message.content, getattr(embed, "title", "") or "")
-    return await message.reply(embed=embed, view=view)
+    view = FeedbackView(message.author.id, (message.content or "")[:300], getattr(embed, "title", "") or "")
+    # reply and return the sent message
+    try:
+        return await message.reply(embed=embed, view=view, mention_author=False)
+    except TypeError:
+        # older discord.py versions may not accept view in reply
+        sent = await message.channel.send(embed=embed)
+        return sent
 
 # -------------------------
 # Bot class
@@ -741,24 +748,46 @@ def build_short_answer(source:str, item:dict) -> str:
     return " · ".join(parts)
 
 # -------------------------
-# Interaction / Message helpers
+# Unified responder that supports Context, Interaction, Message
 # -------------------------
-async def _respond(ctx_or_inter, **kwargs):
-    if isinstance(ctx_or_inter, commands.Context):
-        return await ctx_or_inter.send(**kwargs)
-    elif isinstance(ctx_or_inter, discord.Interaction):
-        try:
-            if ctx_or_inter.response.is_done():
+async def _respond(ctx_or_inter: Union[commands.Context, discord.Interaction, discord.Message], **kwargs):
+    """
+    Safe responder: sends message according to the type of ctx_or_inter.
+    kwargs accepted: content, embed, view, ephemeral, etc.
+    """
+    try:
+        if isinstance(ctx_or_inter, commands.Context):
+            return await ctx_or_inter.send(**kwargs)
+        if isinstance(ctx_or_inter, discord.Interaction):
+            # interaction.response may already be done
+            try:
+                if not ctx_or_inter.response.is_done():
+                    return await ctx_or_inter.response.send_message(**kwargs)
                 return await ctx_or_inter.followup.send(**kwargs)
-            else:
-                return await ctx_or_inter.response.send_message(**kwargs)
-        except Exception:
-            return await ctx_or_inter.followup.send(**kwargs)
-    elif isinstance(ctx_or_inter, discord.Message):
-        # reply to message
-        return await ctx_or_inter.reply(**kwargs)
-    else:
+            except Exception:
+                return await ctx_or_inter.followup.send(**kwargs)
+        if isinstance(ctx_or_inter, discord.Message):
+            # reply on the message; mention_author=False to avoid ping
+            # note: some kwargs (ephemeral) don't apply to message.reply
+            kw = kwargs.copy()
+            # remove ephemeral if present
+            kw.pop('ephemeral', None)
+            try:
+                return await ctx_or_inter.reply(**kw, mention_author=False)
+            except TypeError:
+                # fallback if view not supported in reply
+                view = kw.pop('view', None)
+                sent = await ctx_or_inter.channel.send(**kw)
+                if view and hasattr(sent, 'edit'):
+                    try:
+                        await sent.edit(view=view)
+                    except Exception:
+                        pass
+                return sent
         raise TypeError("Unsupported context")
+    except Exception as e:
+        logger.exception("Responder failed: %s", e)
+        raise
 
 # -------------------------
 # Commands: help / stats / search
@@ -812,45 +841,49 @@ bot.add_command(ask_prefix)
 # -------------------------
 # Core message handling (supports Context, Interaction, Message)
 # -------------------------
-async def handle_message_query(ctx_or_inter, raw_query: str, message_obj: discord.Message = None):
+async def handle_message_query(ctx_or_inter: Union[commands.Context, discord.Interaction, discord.Message],
+                               raw_query: str,
+                               message_obj: Optional[discord.Message] = None):
     """
     Common handler for queries (from message, context or interaction).
-    Supports: commands.Context, discord.Interaction, discord.Message
     """
-    # determine caller type
+    # detect type
     is_context = isinstance(ctx_or_inter, commands.Context)
     is_interaction = isinstance(ctx_or_inter, discord.Interaction)
     is_message = isinstance(ctx_or_inter, discord.Message)
 
-    # sanitize
     query = raw_query.strip()
     if not query:
         await _respond(ctx_or_inter, content="اكتب السؤال أو اسم العنصر.")
         return
 
-    # anti-spam: handle both Context and Message (Interactions usually not rate-limited here)
+    # anti-spam
     try:
         if is_context:
             allowed, wait = bot.anti_spam.check(ctx_or_inter.author.id)
             if not allowed:
-                await ctx_or_inter.send(embed=discord.Embed(title="⚠️ انتظر قليلاً", description=f"⏰ انتظر {wait} ثانية", color=COLORS['warning']), delete_after=10)
+                await _respond(ctx_or_inter, embed=discord.Embed(title="⚠️ انتظر قليلاً", description=f"⏰ انتظر {wait} ثانية", color=COLORS['warning']))
                 return
         elif is_message:
             allowed, wait = bot.anti_spam.check(ctx_or_inter.author.id)
             if not allowed:
-                embed = discord.Embed(title="⚠️ انتظر قليلاً", description=f"⏰ انتظر {wait} ثانية", color=COLORS['warning'])
-                await ctx_or_inter.reply(embed=embed, mention_author=False)
+                await _respond(ctx_or_inter, embed=discord.Embed(title="⚠️ انتظر قليلاً", description=f"⏰ انتظر {wait} ثانية", color=COLORS['warning']))
                 return
     except Exception:
         logger.exception("Anti-spam check failed")
 
-    # inject context if present (support both Context and Message)
-    if is_context:
-        query = bot.context_manager.inject_context(ctx_or_inter.author.id, query)
-    elif is_message:
-        query = bot.context_manager.inject_context(ctx_or_inter.author.id, query)
+    # inject context (supports context & message & interaction via user id)
+    try:
+        if is_context:
+            query = bot.context_manager.inject_context(ctx_or_inter.author.id, query)
+        elif is_interaction:
+            query = bot.context_manager.inject_context(ctx_or_inter.user.id, query)
+        elif is_message:
+            query = bot.context_manager.inject_context(ctx_or_inter.author.id, query)
+    except Exception:
+        logger.exception("Context injection failed")
 
-    # detect question type for threshold tuning
+    # detect question type
     ql = query.lower()
     is_crafting = any(k in ql for k in ['تصنيع','مكونات','recipe','craft'])
     is_location = any(k in ql for k in ['وين','اين','أين','مكان','where','location','احصل'])
@@ -860,16 +893,15 @@ async def handle_message_query(ctx_or_inter, raw_query: str, message_obj: discor
     if is_crafting or is_location or is_obtain:
         match_threshold = 0.35
 
-    # attempt local search first
+    # search local data
     results = bot.search_engine.search(query, limit=5 if (is_crafting or is_obtain or is_location) else 1)
 
-    # if best result passes threshold, send short + details-button embed
     if results and results[0]['score'] >= match_threshold:
         result = results[0]
         item = result['item']
         short = build_short_answer(result.get('item_source','local') if 'item_source' in result else 'local', item)
         embed = EmbedBuilder.item_embed(item, None)
-        # include extra custom details for obtain questions
+
         if is_obtain or is_location:
             obtain_info = []
             found_in = item.get('foundIn')
@@ -887,44 +919,27 @@ async def handle_message_query(ctx_or_inter, raw_query: str, message_obj: discor
 
         view = DetailsView(embed)
 
-        # send reply depending on caller type
+        # send appropriately
         try:
             if is_context:
-                reply = await reply_with_feedback(ctx_or_inter.message, embed)
-                await ctx_or_inter.send(content=short, view=view)
+                await reply_with_feedback(ctx_or_inter.message, embed)
+                await _respond(ctx_or_inter, content=short, view=view)
             elif is_interaction:
-                await ctx_or_inter.response.send_message(content=short, embed=None, view=view)
+                # interactions: use response.send_message (deferred check handled in _respond)
+                await _respond(ctx_or_inter, content=short, view=view)
             elif is_message:
-                reply = await reply_with_feedback(ctx_or_inter, embed)
-                try:
-                    await ctx_or_inter.reply(content=short, mention_author=False, view=view)
-                except TypeError:
-                    await ctx_or_inter.channel.send(content=short, view=view)
-        except Exception as e:
-            logger.exception("Failed to send response: %s", e)
-            try:
-                if is_interaction:
-                    await ctx_or_inter.followup.send(content=short)
-                elif is_context:
-                    await ctx_or_inter.send(content=short)
-                elif is_message:
-                    await ctx_or_inter.channel.send(content=short)
-            except Exception:
-                pass
+                await reply_with_feedback(ctx_or_inter, embed)
+                await _respond(ctx_or_inter, content=short, view=view)
+        except Exception:
+            logger.exception("Failed to deliver item response")
 
-        # set context for follow-ups
         name = bot.search_engine.extract_name(item)
-        if is_context:
-            user_id = ctx_or_inter.author.id
-        elif is_interaction:
-            user_id = ctx_or_inter.user.id
-        else:
-            user_id = ctx_or_inter.author.id
+        user_id = (ctx_or_inter.author.id if is_context or is_message else ctx_or_inter.user.id)
         bot.context_manager.set_context(user_id, name, item)
         bot.questions_answered += 1
         return
 
-    # if no strong match, but moderate matches exist, offer disambiguation buttons
+    # offer disambiguation if moderate matches
     top = bot.search_engine.search(query, limit=5)
     top_filtered = [ (r['item'].get('id') if 'id' in r['item'] else 'local', r['item'], r['score']) for r in top if r['score']>=0.40 ]
     if top_filtered:
@@ -933,11 +948,10 @@ async def handle_message_query(ctx_or_inter, raw_query: str, message_obj: discor
         await _respond(ctx_or_inter, content=msg, view=view)
         return
 
-    # fallback to AI if configured and allowed
+    # fallback to AI
     ai_enabled = any([DEEPSEEK_API_KEY,GROQ_API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY,GOOGLE_API_KEY])
     use_ai = any(tok in ql for tok in ['أفضل','أقوى','استراتيجية','لماذا','ليش','كيف','explain','vs','مقارنة','بديل','alternative'])
     if use_ai and ai_enabled:
-        # craft safe context
         user_ctx = None
         if is_context:
             user_ctx = bot.context_manager.get_context(ctx_or_inter.author.id)
@@ -966,55 +980,54 @@ async def handle_message_query(ctx_or_inter, raw_query: str, message_obj: discor
             short_ans = truncate_answer_to_sentences(ai_res['answer'], max_sentences=2)
             embed = discord.Embed(title="🤖 إجابة مختصرة", description=short_ans[:700], color=COLORS['info'], timestamp=datetime.now())
             embed.set_footer(text=f"via {ai_res['provider']} • {BOT_NAME}")
-            if is_context:
-                await reply_with_feedback(ctx_or_inter.message, embed)
-            elif is_interaction:
-                await ctx_or_inter.followup.send(embed=embed)
-            elif is_message:
-                await reply_with_feedback(ctx_or_inter, embed)
+            try:
+                if is_context:
+                    await reply_with_feedback(ctx_or_inter.message, embed)
+                elif is_interaction:
+                    await _respond(ctx_or_inter, embed=embed)
+                elif is_message:
+                    await reply_with_feedback(ctx_or_inter, embed)
+            except Exception:
+                logger.exception("Failed to send AI reply")
             return
-        # else fallthrough to not found
 
-    # final: not found in data or AI
+    # not found
     await _respond(ctx_or_inter, content="ما لقيت شيء واضح في الداتا. جرّب تكتب اسم العنصر بالكامل أو تغير صياغة السؤال.")
 
 # -------------------------
-# Helper wrapper for message event
+# on_message: routes Message to handler
 # -------------------------
 @bot.event
 async def on_message(message: discord.Message):
     try:
         if message.author.bot:
             return
-        # guild filter
         if message.guild and message.guild.id != ALLOWED_GUILD_ID:
             return
-        # channel filter: if not allowed channel, still process commands
+        # If channel not allowed, still allow commands
         if message.channel.id != ALLOWED_CHANNEL_ID:
             await bot.process_commands(message)
             return
-        content = message.content.strip()
+        content = (message.content or "").strip()
         if not content or len(content) < 3:
             return
-        # ignore greetings
+        # ignore greetings quickly
         if content.lower() in ['hi','hello','مرحبا','السلام','هاي','هلا']:
             return
-        # quick replies
         quick = {'شكراً':'العفو! 💚','thanks':"You're welcome!"}
         if content in quick:
-            await message.reply(quick[content])
+            await message.reply(quick[content], mention_author=False)
             return
-        # process user message
         # remove prefix "دليل" if present
         if content.lower().startswith('دليل'):
             content = content[5:].strip()
             if not content: return
-        # pass to handler
+        # pass to handler as Message
         await handle_message_query(message, content, message_obj=message)
     except Exception as e:
         logger.exception("خطأ في on_message: %s", e)
         try:
-            await message.reply(embed=EmbedBuilder.error("خطأ غير متوقع","حصل خطأ داخل البوت."))
+            await message.reply(embed=EmbedBuilder.error("خطأ غير متوقع","حصل خطأ داخل البوت."), mention_author=False)
         except Exception:
             pass
 
