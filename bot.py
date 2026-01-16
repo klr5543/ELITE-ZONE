@@ -42,10 +42,43 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 BOT_NAME = "دليل"
 BOT_VERSION = "2.0.1"
 
-# وضع عمل الذكاء الاصطناعي
-# "hybrid" = يستخدم الداتا + AI (الوضع القديم)
-# "ai_only" = يتجاهل الداتا ويستخدم AI فقط
 AI_MODE = os.getenv("AI_MODE", "ai_only").lower()
+
+DOC_SITES = [
+    "https://arcraiders.wiki/wiki/{slug}",
+    "https://arc-raiders.fandom.com/wiki/{slug}"
+]
+
+def slugify_for_docs(name: str) -> str:
+    name = name.strip()
+    name = re.sub(r'\s+', ' ', name)
+    name = re.sub(r'[^A-Za-z0-9 _-]', '', name)
+    return name.replace(' ', '_')
+
+async def fetch_doc_snippet(raw_name: str, max_chars: int = 1500) -> str:
+    if not raw_name:
+        return ""
+    
+    slug = slugify_for_docs(raw_name)
+    texts = []
+    
+    timeout = aiohttp.ClientTimeout(total=8)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for pattern in DOC_SITES:
+            url = pattern.format(slug=slug)
+            try:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        continue
+                    html = await resp.text()
+                    text = re.sub(r'<[^>]+>', ' ', html)
+                    text = re.sub(r'\s+', ' ', text).strip()
+                    if text:
+                        texts.append(text[:max_chars])
+            except Exception:
+                continue
+    
+    return "\n\n".join(texts)
 
 # قاموس عربي-إنجليزي للكلمات الشائعة
 ARABIC_TO_ENGLISH = {
@@ -1537,6 +1570,21 @@ async def search_command(interaction: discord.Interaction, query: str):
     embed.set_footer(text=f"🤖 {BOT_NAME}")
     await interaction.followup.send(embed=embed)
 
+@bot.tree.command(name="checkwiki", description="فحص اتصال البوت بويكي ARC Raiders")
+async def check_wiki_command(interaction: discord.Interaction):
+    if interaction.channel and interaction.channel.id != ALLOWED_CHANNEL_ID:
+        await interaction.response.send_message("استخدم قناة الأسئلة المخصصة فقط.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    try:
+        text = await fetch_doc_snippet("Loot", max_chars=400)
+        if text:
+            await interaction.followup.send("✅ أقدر أوصل لويكي ARC Raiders وأقرأ المحتوى بنجاح.", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ حاولت أوصل لويكي ARC Raiders بس ما رجع أي نص. ممكن يكون في حجب أو مشكلة بالموقع.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ ما قدرت أوصل لويكي ARC Raiders.\nالخطأ التقني: {e}", ephemeral=True)
+
 # ═══════════════════════════════════════════════════════════════
 # معالجة الرسائل
 # ═══════════════════════════════════════════════════════════════
@@ -2486,6 +2534,18 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             context = context + " | " + ping_context
         else:
             context = ping_context
+    
+    focus_name = None
+    matches = re.findall(r'[A-Za-z][A-Za-z0-9\s\-]+', question)
+    if matches:
+        focus_name = max(matches, key=len).strip()
+    
+    extra_docs = await fetch_doc_snippet(focus_name or question)
+    if extra_docs:
+        if context:
+            context = context + " | معلومات من ويكي ARC Raiders: " + extra_docs
+        else:
+            context = "معلومات من ويكي ARC Raiders: " + extra_docs
     
     ai_result = await bot.ai_manager.ask_ai(question, context)
     
