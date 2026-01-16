@@ -42,7 +42,7 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 BOT_NAME = "دليل"
 BOT_VERSION = "2.0.1"
 
-AI_MODE = os.getenv("AI_MODE", "hybrid").lower()
+AI_MODE = os.getenv("AI_MODE", "ai_only").lower()
 
 DOC_SITES = [
     "https://arcraiders.wiki/wiki/{slug}",
