@@ -1,0 +1,716 @@
+name: Apply Daleel Bot Changes
+
+# Trigger manually from the Actions tab
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # يسمح للـ Action بكتابة (commit) إلى المستودع
+
+jobs:
+  apply-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Ensure directories
+        run: |
+          mkdir -p utils
+          mkdir -p cogs
+
+      - name: Write bot.py
+        run: |
+          cat > bot.py <<'EOF'
+# بوت "دليل" - ملف واحد شامل للاستخدام الفوري
+# انسخ هذا الملف كاملًا واستبدل به bot.py في مشروعك، ثم شغّل.
+# ملاحظات: يحتاج مجلد arcraiders-data/ جنب هذا الملف ليعمل البحث المحلي.
+# يعتمد على discord.py v2.x و python-dotenv. rapidfuzz اختياري لتحسين المطابقة.
+
+import os
+import re
+import json
+import logging
+import asyncio
+from pathlib import Path
+from functools import lru_cache
+from difflib import SequenceMatcher
+from typing import Optional, Tuple, List
+
+import discord
+from discord.ext import commands
+from discord import app_commands
+from dotenv import load_dotenv
+
+# Optional fast fuzzy library — أفضل من SequenceMatcher إن توافر
+try:
+    from rapidfuzz import fuzz
+    HAS_RAPIDFUZZ = True
+except Exception:
+    HAS_RAPIDFUZZ = False
+
+# -------------------------
+# إعداد البيئة والمتغيرات
+# -------------------------
+load_dotenv()
+
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+if not DISCORD_TOKEN:
+    # لا نوقف هنا لأن المستخدم قد يريد فقط إنشاء الملف؛ لكن نخبره عند التشغيل.
+    pass
+
+ALLOWED_GUILD_ID = int(os.getenv("ALLOWED_GUILD_ID", "621014916173791288"))
+OWNER_ID = int(os.getenv("OWNER_ID", "595228721946820614"))
+
+BOT_NAME = "دليل"
+BOT_VERSION = "2.0.1"
+
+# -------------------------
+# إعداد logging
+# -------------------------
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("daleel-bot")
+
+# -------------------------
+# قواميس ترجمة عربية->إنجليزية بسيطة (قابلة للتوسيع)
+# -------------------------
+ARABIC_TO_ENGLISH = {
+    'سلاح': 'weapon',
+    'اسلحة': 'weapons',
+    'بندقية': 'rifle',
+    'مسدس': 'pistol',
+    'رشاش': 'smg',
+    'قناص': 'sniper',
+    'شوتقن': 'shotgun',
+    'مخطط': 'blueprint',
+    'مخطوطة': 'blueprint',
+    'تصنيع': 'craft',
+    'طاولة': 'workbench',
+    'ادوات': 'materials',
+    'أدوات': 'materials',
+    'قطع': 'parts',
+    'قطع غيار': 'parts',
+    'مكونات': 'components',
+    'كيفية الحصول': 'how to get',
+    'كيف احصل': 'how to get',
+    # أضف المزيد حسب الحاجة...
+}
+
+# -------------------------
+# مسارات البيانات
+# -------------------------
+BASE_DIR = Path(__file__).parent
+DATA_DIR = BASE_DIR / "arcraiders-data"
+
+# -------------------------
+# أدوات مساعدة للنصوص والبحث
+# -------------------------
+def normalize_text(s: Optional[str]) -> str:
+    """تنظيف النص: أحرف صغيرة، ازالة علامات غير مرغوبة، تضييق المسافات."""
+    if not s:
+        return ""
+    s = str(s).lower()
+    # اترك الحروف العربية، الأرقام، الحروف اللاتينية، الشرطة والمسافة
+    s = re.sub(r"[^\w\s\u0600-\u06FF\-]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def translate_arabic_tokens(text: str) -> str:
+    """استبدال كلمات عربية محددة بمرادفها بالإنجليزي (مبسّط لتحسين البحث)."""
+    tokens = text.split()
+    out = []
+    for t in tokens:
+        out.append(ARABIC_TO_ENGLISH.get(t, t))
+    return " ".join(out)
+
+def similarity_score(a: str, b: str) -> float:
+    """حساب تشابه بين نصين؛ rapidfuzz إن توفّر أفضل."""
+    if HAS_RAPIDFUZZ:
+        # normalised token sort ratio: 0..100
+        try:
+            return fuzz.token_sort_ratio(a, b) / 100.0
+        except Exception:
+            return SequenceMatcher(None, a, b).ratio()
+    else:
+        return SequenceMatcher(None, a, b).ratio()
+
+# -------------------------
+# DataLoader: تحميل وفهرسة JSON محليًا
+# -------------------------
+class DataLoader:
+    def __init__(self, data_dir: Path):
+        self.data_dir = data_dir
+        self._data = {}
+        self._index = []  # list of (source_file, obj, [name_variants_normalized])
+        self._load_all()
+
+    def _load_all(self):
+        """يقرا كل ملفات JSON في data_dir ويبني فهرس للبحث."""
+        if not self.data_dir.exists():
+            logger.warning("مجلد البيانات لم يُوجد: %s", self.data_dir)
+            return
+        files = list(self.data_dir.glob("*.json"))
+        for f in files:
+            try:
+                txt = f.read_text(encoding="utf-8")
+                content = json.loads(txt)
+                self._data[f.stem] = content
+                if isinstance(content, list):
+                    for obj in content:
+                        names = []
+                        name_field = obj.get("name")
+                        if isinstance(name_field, dict):
+                            for v in name_field.values():
+                                names.append(str(v))
+                        elif isinstance(name_field, str):
+                            names.append(name_field)
+                        # id قد يساعد
+                        if "id" in obj and obj.get("id"):
+                            names.append(str(obj.get("id")))
+                        # بعض العناصر قد تحوي displayName أو title
+                        if "displayName" in obj:
+                            names.append(str(obj.get("displayName")))
+                        if "title" in obj:
+                            names.append(str(obj.get("title")))
+                        names_normalized = [normalize_text(n) for n in names if n]
+                        if names_normalized:
+                            self._index.append((f.stem, obj, names_normalized))
+                else:
+                    # ملف كائن واحد (standalone) — يمكن إضافته لاحقًا
+                    pass
+            except Exception as e:
+                logger.exception("فشل تحميل ملف JSON %s: %s", f, e)
+        logger.info("DataLoader: حمل %d ملفات JSON وفهرس %d عنصر", len(self._data), len(self._index))
+
+    @lru_cache(maxsize=128)
+    def find_best_match(self, query: str, min_ratio: float = 0.65) -> Optional[Tuple[str, dict, float]]:
+        """
+        يبحث ويعيد (source_file, item_obj, score) أو None.
+        يحاول أيضاً تحويل بعض كلمات الاستعلام من العربي إلى إنجليزي لتحسين التطابق.
+        """
+        q = normalize_text(query)
+        q_trans = normalize_text(translate_arabic_tokens(q))
+        best = None
+        best_score = 0.0
+        # لو الاستعلام قصير جداً، نسمح بنسب أعلى فقط
+        if len(q) <= 3:
+            min_ratio = max(min_ratio, 0.8)
+        for source, obj, names in self._index:
+            for n in names:
+                s1 = similarity_score(q, n)
+                s2 = similarity_score(q_trans, n)
+                score = max(s1, s2)
+                if score > best_score:
+                    best_score = score
+                    best = (source, obj, score)
+        if best and best_score >= min_ratio:
+            return best
+        return None
+
+    def find_top_matches(self, query: str, limit: int = 5) -> List[Tuple[str, dict, float]]:
+        """تُعيد قائمة من النتائج الأعلى ترتيبًا (حتى limit) — قد نستخدمها لعرض خيارات."""
+        q = normalize_text(query)
+        q_trans = normalize_text(translate_arabic_tokens(q))
+        scored = []
+        for source, obj, names in self._index:
+            for n in names:
+                s1 = similarity_score(q, n)
+                s2 = similarity_score(q_trans, n)
+                score = max(s1, s2)
+                scored.append((score, source, obj))
+        scored.sort(reverse=True, key=lambda x: x[0])
+        results = []
+        for score, source, obj in scored[:limit]:
+            results.append((source, obj, score))
+        return results
+
+    def raw(self, name: str):
+        return self._data.get(name)
+
+# -------------------------
+# بناء الردود (مختصر + تفصيلي)
+# -------------------------
+def safe_get_display_name(item: dict) -> str:
+    name = item.get("name")
+    if isinstance(name, dict):
+        # حاول العربية ثم الإنجليزية ثم أي لغة متاحة
+        return name.get("ar") or name.get("en") or next(iter(name.values()))
+    return name or item.get("id") or "معلومة"
+
+def build_short_answer(source: str, item: dict) -> str:
+    display = safe_get_display_name(item)
+    parts = [f"**{display}**"]
+    # المكان
+    found = item.get("foundIn") or item.get("maps") or item.get("location")
+    if found:
+        if isinstance(found, (list, tuple)):
+            parts.append(f"تحصل عليه في: {', '.join(str(x) for x in found[:3])}")
+        else:
+            parts.append(f"تحصل عليه في: {found}")
+    # السعر أو القيمة
+    price = item.get("value") or item.get("price") or item.get("cost")
+    if price:
+        parts.append(f"السعر: {price}")
+    return " · ".join(parts)
+
+def build_full_embed(source: str, item: dict) -> discord.Embed:
+    title = safe_get_display_name(item)
+    # وصف: إذا يوجد وصف عربي ارفعه، وإلا استخدم الحقل description أو أي حقل محتمل
+    descr = ""
+    name_field = item.get("name")
+    if isinstance(name_field, dict):
+        descr = item.get("description") or name_field.get("ar") or name_field.get("en") or ""
+    else:
+        descr = item.get("description") or ""
+    embed = discord.Embed(title=str(title), description=str(descr) or None, color=0x2F3136)
+    # الحقول الشائعة
+    if item.get("foundIn"):
+        embed.add_field(name="المكان", value=str(item.get("foundIn")), inline=False)
+    if item.get("maps"):
+        maps = item.get("maps")
+        if isinstance(maps, (list, tuple)):
+            embed.add_field(name="الخرائط", value=", ".join(maps[:8]), inline=False)
+    price = item.get("value") or item.get("price") or item.get("cost")
+    if price:
+        embed.add_field(name="السعر / التكلفة", value=str(price), inline=True)
+    if item.get("drops"):
+        drops = item.get("drops")
+        if isinstance(drops, (list, tuple)):
+            embed.add_field(name="أسقاطات (drops)", value=", ".join(drops[:20]), inline=False)
+    # وصف الوصفة أو تصنيع
+    if item.get("recipe") or item.get("craft"):
+        embed.add_field(name="وصفة / تصنيع", value=str(item.get("recipe") or item.get("craft")), inline=False)
+    # footer
+    embed.set_footer(text=f"مصدر: {source} · {BOT_NAME} v{BOT_VERSION}")
+    return embed
+
+# -------------------------
+# Discord bot (single-file)
+# -------------------------
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# سنحمل DataLoader عند الإقلاع
+bot.data_loader: Optional[DataLoader] = None
+
+class DetailsView(discord.ui.View):
+    """زر لعرض التفاصيل (embed كامل)."""
+    def __init__(self, embed: discord.Embed, timeout: int = 120):
+        super().__init__(timeout=timeout)
+        self.embed = embed
+
+    @discord.ui.button(label="عرض التفاصيل", style=discord.ButtonStyle.primary, row=1)
+    async def on_show(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # نرسل التفاصيل علنياً (ليس ephemeral) لكي يراها الكل في القناة
+        await interaction.response.send_message(embed=self.embed)
+
+class DisambiguationView(discord.ui.View):
+    """عرض خيارات عند وجود نتائج متقاربة."""
+    def __init__(self, options: List[Tuple[str, dict, float]], timeout: int = 60):
+        super().__init__(timeout=timeout)
+        self.options = options
+        # Dynamically create buttons for options
+        for i, (source, item, score) in enumerate(options[:5]):
+            label = safe_get_display_name(item)
+            # نامر البوت بأن نستخدم custom_id لنعرف أي خيار ضغط
+            self.add_item(DisambButton(label=label, payload=(source, item, score)))
+
+class DisambButton(discord.ui.Button):
+    def __init__(self, label: str, payload):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary)
+        self.payload = payload  # (source, item, score)
+
+    async def callback(self, interaction: discord.Interaction):
+        source, item, score = self.payload
+        short = build_short_answer(source, item)
+        embed = build_full_embed(source, item)
+        view = DetailsView(embed)
+        await interaction.response.send_message(content=short, embed=None, view=view)
+
+# -------------------------
+# الأحداث والأوامر
+# -------------------------
+@bot.event
+async def on_ready():
+    logger.info("Logged in as %s (id=%s)", bot.user, bot.user.id)
+    # حمل DataLoader
+    bot.data_loader = DataLoader(DATA_DIR)
+    # تسجيل أوامر Slash على الـ guild المحدد (أسرع للتطوير)
+    try:
+        guild_obj = discord.Object(id=ALLOWED_GUILD_ID)
+        await bot.tree.sync(guild=guild_obj)
+        logger.info("Synced slash commands to guild %s", ALLOWED_GUILD_ID)
+    except Exception as e:
+        logger.exception("فشل مزامنة الأوامر: %s", e)
+
+async def _respond_from_context(ctx_or_inter, **kwargs):
+    """
+    عامل مساعد يتعامل مع ctx (نص) أو interaction (سلاش) لإرسال الرد بشكل صحيح.
+    - إذا كان ctx_or_inter عبارة عن commands.Context: استخدم ctx.send
+    - إذا كان interaction: استخدم response أو followup (اعتمادًا على الحالة)
+    """
+    if isinstance(ctx_or_inter, commands.Context):
+        return await ctx_or_inter.send(**kwargs)
+    elif isinstance(ctx_or_inter, discord.Interaction):
+        # إذا لم نكن defer سابقاً، نرسل مباشرة response
+        try:
+            # interaction.response.send_message سيُفشل إذا استُخدمت response.defer() سابقًا؛ فنتحقق
+            if ctx_or_inter.response.is_done():
+                return await ctx_or_inter.followup.send(**kwargs)
+            else:
+                return await ctx_or_inter.response.send_message(**kwargs)
+        except Exception:
+            # fallback
+            return await ctx_or_inter.followup.send(**kwargs)
+    else:
+        raise TypeError("Unsupported context type")
+
+async def handle_query_common(ctx_or_inter, query: str):
+    """
+    المنطق المركزي: بحث محلي، إجابة مختصرة، زر تفاصيل، أو طلب توضيح/اقتراح خيارات.
+    """
+    loader: DataLoader = bot.data_loader
+    if loader is None:
+        await _respond_from_context(ctx_or_inter, content="خطأ: DataLoader غير محمّل. تأكد من وجود مجلد arcraiders-data/.")
+        return
+
+    # حاول البحث الأفضل أولاً
+    exact = loader.find_best_match(query, min_ratio=0.70)
+    if exact:
+        source, item, score = exact
+        short = build_short_answer(source, item)
+        embed = build_full_embed(source, item)
+        view = DetailsView(embed)
+        await _respond_from_context(ctx_or_inter, content=short, embed=None, view=view)
+        return
+
+    # لو ما في نتيجة قوية، نُعرض أعلى بعض النتائج كخيارات إذا كانت مشابهة
+    top = loader.find_top_matches(query, limit=5)
+    # نأخذ فقط النتائج التي تتجاوز نسبة صغيرة (مثلاً 0.45) لعرضها كخيارات
+    top_filtered = [t for t in top if t[2] >= 0.45]
+    if top_filtered:
+        # إذا كانت النتيجة الأعلى أقل من threshold نقترح خيارات للمستخدم
+        msg = "ما حصلت تطابق قوي، بس هذي ممكن تكون المقصودة. اضغط على الخيار المناسب:"
+        view = DisambiguationView(top_filtered)
+        await _respond_from_context(ctx_or_inter, content=msg, view=view)
+        return
+
+    # لا نتائج — نطلب توضيحًا
+    await _respond_from_context(ctx_or_inter, content="ما فهمت اسم واضح. تقدر تكتب اسم العنصر بالكامل أو توضّح أكثر؟")
+
+# نصي (prefix) أمر — للحفاظ على التوافق
+@commands.command(name="سأل")
+async def ask_prefix(ctx: commands.Context, *, query: str):
+    await handle_query_common(ctx, query)
+
+bot.add_command(ask_prefix)
+
+# Slash command (سؤال)
+@bot.tree.command(name="سأل", description="اسأل عن عنصر أو عن طريقة الحصول عليه")
+@app_commands.describe(query="اكتب اسم العنصر أو السؤال")
+async def ask_slash(interaction: discord.Interaction, query: str):
+    # نستخدم defer لأن البحث قد يحتاج وقتًا بسيطًا لتحميل الفهارس
+    await interaction.response.defer()
+    await handle_query_common(interaction, query)
+
+# أمر اداري لإعادة تحميل البيانات (للمالك فقط)
+@commands.is_owner()
+@commands.command(name="reload_data")
+async def reload_data(ctx: commands.Context):
+    bot.data_loader = DataLoader(DATA_DIR)
+    await ctx.send("تم إعادة تحميل بيانات arcraiders-data.")
+
+# بديل للمالك بالعربي
+@commands.check(lambda ctx: ctx.author.id == OWNER_ID)
+@commands.command(name="اعد_تحميل_البيانات")
+async def reload_data_ar(ctx: commands.Context):
+    bot.data_loader = DataLoader(DATA_DIR)
+    await ctx.send("تم إعادة تحميل البيانات بنجاح ✅")
+
+# -------------------------
+# تشغيل البوت
+# -------------------------
+def main():
+    if not DISCORD_TOKEN:
+        logger.error("DISCORD_TOKEN غير مضبوط. ضع التوكن في متغيرات البيئة أو ملف .env ثم أعد التشغيل.")
+        return
+    try:
+        bot.run(DISCORD_TOKEN)
+    except Exception as e:
+        logger.exception("فشل تشغيل البوت: %s", e)
+
+if __name__ == "__main__":
+    main()
+EOF
+
+      - name: Write utils/data_loader.py
+        run: |
+          cat > utils/data_loader.py <<'EOF'
+# Simple DataLoader to read JSON files from arcraiders-data and provide a find_best_match function.
+import json
+from pathlib import Path
+from difflib import SequenceMatcher
+from functools import lru_cache
+import re
+import logging
+
+logger = logging.getLogger("daleel-bot.data_loader")
+
+BASE_DIR = Path(__file__).parent.parent
+DATA_DIR = BASE_DIR / "arcraiders-data"
+
+# Minimal AR -> EN mapping (extend as needed)
+ARABIC_TO_ENGLISH = {
+    'سلاح': 'weapon',
+    'اسلحة': 'weapons',
+    'بندقية': 'rifle',
+    'مسدس': 'pistol',
+    'رشاش': 'smg',
+    'قناص': 'sniper',
+    'شوتقن': 'shotgun',
+    'مخطط': 'blueprint',
+    'مخطوطة': 'blueprint',
+    'تصنيع': 'craft',
+    'طاولة': 'workbench',
+    'ادوات': 'materials',
+    'أدوات': 'materials',
+}
+
+def normalize_text(s: str) -> str:
+    if not s:
+        return ""
+    s = s.lower()
+    s = re.sub(r"[^\w\s\u0600-\u06FF\-]", " ", s)  # keep arabic letters, alnum, hyphen
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+class DataLoader:
+    def __init__(self):
+        self._data = {}
+        self._items_index = []
+        self._load_all_json()
+
+    def _load_all_json(self):
+        files = list(DATA_DIR.glob("*.json"))
+        for f in files:
+            try:
+                content = json.loads(f.read_text(encoding="utf-8"))
+                self._data[f.stem] = content
+                # build index for search if content is a list of objects
+                if isinstance(content, list):
+                    for obj in content:
+                        # determine candidate names
+                        name_candidates = []
+                        name = obj.get("name")
+                        if isinstance(name, dict):
+                            # multiple languages
+                            for v in name.values():
+                                name_candidates.append(str(v))
+                        elif isinstance(name, str):
+                            name_candidates.append(name)
+                        # some entries might have id or title
+                        if "id" in obj:
+                            name_candidates.append(obj.get("id"))
+                        self._items_index.append((f.stem, obj, [normalize_text(x) for x in name_candidates if x]))
+                # if standalone object, ignore for now
+            except Exception as e:
+                logger.exception("Failed loading %s: %s", f, e)
+
+        logger.info("Loaded %d json files, indexed %d items", len(self._data), len(self._items_index))
+
+    def similarity(self, a: str, b: str) -> float:
+        return SequenceMatcher(None, a, b).ratio()
+
+    def translate_arabic_tokens(self, text: str) -> str:
+        # naive token replacement from ARABIC_TO_ENGLISH
+        tokens = text.split()
+        out = []
+        for t in tokens:
+            out.append(ARABIC_TO_ENGLISH.get(t, t))
+        return " ".join(out)
+
+    def find_best_match(self, query: str, min_ratio: float = 0.65):
+        """
+        Returns tuple (source_file, item_obj, score) or None if no match.
+        Search order: normalize(query) -> attempt English/Arabic match -> best score above threshold.
+        """
+        q = normalize_text(query)
+        # if Arabic tokens map to English, create transliteration attempt too
+        q_trans = normalize_text(self.translate_arabic_tokens(q))
+        best = None
+        best_score = 0.0
+
+        for source, obj, names in self._items_index:
+            for n in names:
+                # check both raw name and transliteration match
+                score1 = self.similarity(q, n)
+                score2 = self.similarity(q_trans, n)
+                score = max(score1, score2)
+                if score > best_score:
+                    best_score = score
+                    best = (source, obj, score)
+
+        if best and best_score >= min_ratio:
+            return best  # (source_file, item_obj, score)
+        return None
+
+    @lru_cache(maxsize=64)
+    def load_file(self, name):
+        return self._data.get(name)
+EOF
+
+      - name: Write cogs/qa_compact.py
+        run: |
+          cat > cogs/qa_compact.py <<'EOF'
+# Cog that answers queries concisely and provides a "عرض التفاصيل" button for the full embed.
+import discord
+from discord.ext import commands
+from discord import app_commands
+import asyncio
+import logging
+
+logger = logging.getLogger("daleel-bot.qa")
+
+class DetailsView(discord.ui.View):
+    def __init__(self, embed: discord.Embed, timeout: int = 60):
+        super().__init__(timeout=timeout)
+        self.embed = embed
+
+    @discord.ui.button(label="عرض التفاصيل", style=discord.ButtonStyle.primary, row=1)
+    async def show_details(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # respond with the full embed (public message)
+        await interaction.response.send_message(embed=self.embed)
+
+class QACompact(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.loader = getattr(bot, "data_loader", None)
+
+    def build_short_answer(self, source: str, item: dict):
+        # try to extract basic fields in a safe way
+        name = item.get("name")
+        if isinstance(name, dict):
+            display_name = name.get("ar") or name.get("en") or next(iter(name.values()))
+        else:
+            display_name = name or item.get("id", "عنصر")
+
+        # attempt to find simple fields: price, foundIn, maps, description
+        price = item.get("value") or item.get("price") or item.get("cost")
+        area = item.get("foundIn") or item.get("maps") or item.get("location")
+        short = f"**{display_name}** — "
+        if area:
+            if isinstance(area, (list, tuple)):
+                short += f"تحصل عليه في: {', '.join(str(x) for x in area[:3])}"
+            else:
+                short += f"تحصل عليه في: {area}"
+        if price:
+            short += f" · السعر: {price}"
+        return short
+
+    def build_full_embed(self, source: str, item: dict):
+        name = item.get("name")
+        if isinstance(name, dict):
+            title = name.get("ar") or name.get("en") or next(iter(name.values()))
+            descr = name.get("en") if name.get("ar") else item.get("description", "")
+        else:
+            title = name or item.get("id", "معلومة")
+            descr = item.get("description", "")
+
+        embed = discord.Embed(title=str(title), description=str(descr) or None, color=0x2F3136)
+        # add standard fields if present
+        if item.get("foundIn"):
+            embed.add_field(name="المكان", value=str(item.get("foundIn")), inline=False)
+        if item.get("maps"):
+            embed.add_field(name="الخرائط", value=", ".join(item.get("maps")[:6]), inline=False)
+        # price/cost
+        price = item.get("value") or item.get("price") or item.get("cost")
+        if price:
+            embed.add_field(name="السعر / التكلفة", value=str(price), inline=True)
+        # drops/ways/craft
+        if item.get("drops"):
+            embed.add_field(name="أسقاطات (drops)", value=", ".join(item.get("drops")[:10]), inline=False)
+        if item.get("recipe"):
+            embed.add_field(name="وصفة / تصنيع", value=str(item.get("recipe")), inline=False)
+        embed.set_footer(text=f"مصدر: {source}")
+        return embed
+
+    async def handle_query(self, ctx_or_inter, query: str, respond_fn):
+        # respond_fn should be awaitable function accepting (content=None, embed=None, view=None)
+        loader = self.loader
+        if not loader:
+            await respond_fn(content="خطأ: DataLoader غير مُحمل.")
+            return
+
+        match = loader.find_best_match(query)
+        if match:
+            source, item, score = match
+            short = self.build_short_answer(source, item)
+            full_embed = self.build_full_embed(source, item)
+            view = DetailsView(full_embed)
+            await respond_fn(content=short, embed=None, view=view)
+            return
+
+        # fallback: ask for clarification
+        await respond_fn(content="ما سمعت اسم واضح. هل تقدر تكتب اسم العنصر بالكامل أو توضّح أكثر؟")
+
+    # Text command for backwards compatibility
+    @commands.command(name="سأل")
+    async def ask_text(self, ctx: commands.Context, *, query: str):
+        await self.handle_query(ctx, query, lambda **kw: ctx.send(**kw))
+
+    # Slash command
+    @app_commands.command(name="سأل", description="اسأل عن عنصر أو عن طريقة الحصول عليه")
+    async def ask_slash(self, interaction: discord.Interaction, query: str):
+        # Defer to allow longer processing
+        await interaction.response.defer()
+        async def responder(**kw):
+            # interaction.followup.send or response.send_message depending on deferred
+            return await interaction.followup.send(**kw)
+        await self.handle_query(interaction, query, responder)
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(QACompact(bot))
+EOF
+
+      - name: Write .env.example
+        run: |
+          cat > .env.example <<'EOF'
+# Example environment variables
+DISCORD_TOKEN=your_token_here
+ALLOWED_GUILD_ID=621014916173791288
+ALLOWED_CHANNEL_ID=1459709364301594848
+LOG_CHANNEL_ID=1459724977346445429
+OWNER_ID=595228721946820614
+
+# API Keys (optional)
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+GROQ_API_KEY=
+DEEPSEEK_API_KEY=
+GOOGLE_API_KEY=
+EOF
+
+      - name: Update requirements.txt
+        run: |
+          cat > requirements.txt <<'EOF'
+discord.py==2.3.2
+python-dotenv==1.0.0
+aiohttp==3.9.1
+rapidfuzz==3.0.0  # اختياري لتحسين التشابه؛ إن أردت تحذف السطر
+EOF
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py utils/data_loader.py cogs/qa_compact.py .env.example requirements.txt || true
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Apply bot refactor: compact replies, data loader, QA cog"
+            git push origin HEAD:$(git rev-parse --abbrev-ref HEAD)
+          fi
