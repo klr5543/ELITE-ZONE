@@ -1669,6 +1669,7 @@ async def search_command(interaction: discord.Interaction, query: str):
 @bot.event
 async def on_message(message: discord.Message):
     print("استقبلت رسالة:", message.content)
+    print(f"استقبلت رسالة في قناة: {message.channel.id} (مسموح: {ALLOWED_CHANNEL_ID}) - المحتوى: {message.content}")
     """معالجة الرسائل"""
     try:
         if message.author.bot:
@@ -1678,6 +1679,7 @@ async def on_message(message: discord.Message):
             return
         
         if message.channel.id != ALLOWED_CHANNEL_ID:
+            print("تم تجاهل الرسالة لأنها ليست في القناة المسموحة.")
             await bot.process_commands(message)
             return
         
