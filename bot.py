@@ -42,6 +42,11 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 BOT_NAME = "دليل"
 BOT_VERSION = "2.0.1"
 
+# وضع عمل الذكاء الاصطناعي
+# "hybrid" = يستخدم الداتا + AI (الوضع القديم)
+# "ai_only" = يتجاهل الداتا ويستخدم AI فقط
+AI_MODE = os.getenv("AI_MODE", "ai_only").lower()
+
 # قاموس عربي-إنجليزي للكلمات الشائعة
 ARABIC_TO_ENGLISH = {
     # أسلحة
@@ -1675,6 +1680,10 @@ async def on_message(message: discord.Message):
             pass
         return
     
+    if AI_MODE == "ai_only":
+        await ask_ai_and_reply(message, question)
+        return
+    
     crafting_keywords = [
         'ادوات', 'أدوات',
         'تصنع', 'تصنيع',
@@ -2077,26 +2086,31 @@ async def on_message(message: discord.Message):
                 return
 
             if (is_obtain_question or is_location_question) and has_location_data:
-                obtain_lines = []
-                if found_in:
-                    obtain_lines.append(f"📍 يوجد غالباً في: {found_in}")
+                obtain_sentences = []
+                base_name = item_name_display or bot.search_engine.extract_name(item)
+                
+                if found_in and price:
+                    obtain_sentences.append(f"{base_name} تلقاه غالباً في منطقة {found_in}، وسعره المقدر في الداتا حوالي {price}.")
+                elif found_in:
+                    obtain_sentences.append(f"{base_name} تلقاه غالباً في منطقة {found_in}.")
+                elif price:
+                    obtain_sentences.append(f"سعر {base_name} المقدر في الداتا حوالي {price}.")
+                
                 if location_field and location_field != found_in:
-                    obtain_lines.append(f"🗺️ الموقع: {location_field}")
+                    obtain_sentences.append(f"الموقع التفصيلي حسب الداتا: {location_field}.")
                 if spawn_rate:
-                    obtain_lines.append(f"🎯 معدل الظهور في الداتا: {spawn_rate}")
+                    obtain_sentences.append(f"معدل الظهور في الداتا تقريباً: {spawn_rate}.")
                 if traders:
                     if isinstance(traders, list):
                         trader_names = [str(t) for t in traders if t]
                         if trader_names:
-                            obtain_lines.append("🛒 يباع عند: " + ", ".join(trader_names))
+                            obtain_sentences.append("يتوفر عند بعض التجار مثل: " + ", ".join(trader_names) + ".")
                     else:
-                        obtain_lines.append(f"🛒 يباع عند: {traders}")
-                if price:
-                    obtain_lines.append(f"💰 السعر المقدر في الداتا: {price}")
+                        obtain_sentences.append(f"يتوفر عند التاجر: {traders}.")
                 if drops_list:
-                    obtain_lines.append(f"⚔️ يسقط من عدد أعداء/بوس مذكور في الداتا: {len(drops_list)}")
+                    obtain_sentences.append(f"يسقط من أكثر من {len(drops_list)} عدو أو بوس مذكورين في الداتا.")
 
-                custom_desc = "\n".join(obtain_lines) if obtain_lines else None
+                custom_desc = "\n".join(obtain_sentences) if obtain_sentences else None
                 embed = EmbedBuilder.item_embed(item, custom_desc)
                 reply = await reply_with_feedback(message, embed)
 
