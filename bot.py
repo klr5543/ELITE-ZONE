@@ -238,17 +238,6 @@ def should_use_ai(text: str) -> bool:
     for intent in intents:
         if intent in ["comparative", "strategy", "explanation", "alternatives", "player_level", "meta"]:
             return True
-    lowered = text.lower()
-    location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
-    obtain_keywords = [
-        'كيف احصل', 'كيف أجيب', 'كيف اجيب',
-        'من وين', 'من وين اجيب', 'من وين احصل',
-        'وين القا', 'وين القى', 'وين القاء',
-        'drop', 'drops', 'loot',
-        'يطيح', 'يطيحه', 'يندر', 'يطلع'
-    ]
-    if any(k in lowered for k in location_keywords) or any(k in lowered for k in obtain_keywords):
-        return True
     return False
 
 
@@ -2423,10 +2412,10 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
     
     if ai_result['success']:
         embed = EmbedBuilder.success(
-            "جواب من AI",
+            "إجابة",
             ai_result['answer']
         )
-        embed.set_footer(text=f"via {ai_result['provider']} • 🤖 {BOT_NAME}")
+        embed.set_footer(text=f"🤖 {BOT_NAME}")
     else:
         embed = EmbedBuilder.error(
             "عذراً",
