@@ -1140,6 +1140,12 @@ class EmbedBuilder:
                     description = str(desc_val)
             description = EmbedBuilder.clean_description(description or 'لا يوجد وصف')
         
+        minimal_mode = False
+        if translated_desc:
+            td = str(translated_desc)
+            if any(x in td for x in ["المنطقة:", "الموقع:", "نسبة الظهور", "التجار", "السعر"]):
+                minimal_mode = True
+        
         embed = discord.Embed(
             title=f"📦 {name}",
             description=description[:500] if description else "لا يوجد وصف",
@@ -1147,42 +1153,45 @@ class EmbedBuilder:
             timestamp=datetime.now()
         )
         
-        category = EmbedBuilder.extract_field(item, 'category')
-        if category:
-            embed.add_field(name="📁 الفئة", value=category, inline=True)
-        
-        item_type = EmbedBuilder.extract_field(item, 'type')
-        if item_type:
-            embed.add_field(name="🏷️ النوع", value=item_type, inline=True)
-        
-        rarity = EmbedBuilder.extract_field(item, 'rarity')
-        if rarity:
-            rarity_ar = {
-                'common': 'عادي ⚪',
-                'uncommon': 'غير شائع 🟢', 
-                'rare': 'نادر 🔵',
-                'epic': 'ملحمي 🟣',
-                'legendary': 'أسطوري 🟡'
-            }.get(rarity.lower(), rarity)
-            embed.add_field(name="💎 الندرة", value=rarity_ar, inline=True)
-        
-        location = EmbedBuilder.extract_field(item, 'location')
-        if location:
-            embed.add_field(name="📍 الموقع", value=location, inline=True)
-        
-        spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
-        if spawn_rate:
-            embed.add_field(name="📊 نسبة الظهور", value=f"{spawn_rate}%", inline=True)
-        
-        price = item.get('price') or item.get('value')
-        if price:
-            embed.add_field(name="💰 السعر", value=str(price), inline=True)
+        if not minimal_mode:
+            category = EmbedBuilder.extract_field(item, 'category')
+            if category:
+                embed.add_field(name="📁 الفئة", value=category, inline=True)
+            
+            item_type = EmbedBuilder.extract_field(item, 'type')
+            if item_type:
+                embed.add_field(name="🏷️ النوع", value=item_type, inline=True)
+            
+            rarity = EmbedBuilder.extract_field(item, 'rarity')
+            if rarity:
+                rarity_ar = {
+                    'common': 'عادي ⚪',
+                    'uncommon': 'غير شائع 🟢', 
+                    'rare': 'نادر 🔵',
+                    'epic': 'ملحمي 🟣',
+                    'legendary': 'أسطوري 🟡'
+                }.get(rarity.lower(), rarity)
+                embed.add_field(name="💎 الندرة", value=rarity_ar, inline=True)
+            
+            location = EmbedBuilder.extract_field(item, 'location')
+            if location:
+                embed.add_field(name="📍 الموقع", value=location, inline=True)
+            
+            spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
+            if spawn_rate:
+                embed.add_field(name="📊 نسبة الظهور", value=f"{spawn_rate}%", inline=True)
+            
+            price = item.get('price') or item.get('value')
+            if price:
+                embed.add_field(name="💰 السعر", value=str(price), inline=True)
         
         suppress_obtain_field = False
         if translated_desc:
             td = str(translated_desc)
             if any(x in td for x in ["المنطقة:", "الموقع:", "نسبة الظهور", "التجار", "السعر"]):
                 suppress_obtain_field = True
+                if minimal_mode:
+                    suppress_obtain_field = True
         
         obtain_lines = []
         found_in = item.get('foundIn')
