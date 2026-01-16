@@ -732,17 +732,17 @@ class AIManager:
 قواعد الرد:
 1. رد بالعربي دائماً.
 2. كن مختصراً ومباشراً قدر الإمكان.
-3. لو ما تعرف الجواب بدقة أو ما عندك مصدر موثوق، قل بصراحة إن المعلومات غير مؤكدة ولا تؤلف أرقاماً أو أماكن أو أسماء.
+3. لو ما تعرف الجواب بدقة، استخدم أفضل معرفتك وخبرتك عن اللعبة، وقل لو المعلومة تقريبية أو غير مؤكدة.
 4. ركز على لعبة ARC Raiders فقط، ولا تتكلم عن ألعاب ثانية.
 5. لا تكرر نصوصاً طويلة أو قوائم مملة؛ استخدم جمل قليلة مفيدة.
 {f'السياق: {context}' if context else ''}"""
         
-        # ترتيب المزودين
+        # ترتيب المزودين (نفضل OpenAI و Anthropic أولاً لو المفاتيح متوفرة)
         providers = [
-            ('deepseek', self._ask_deepseek),
-            ('groq', self._ask_groq),
             ('openai', self._ask_openai),
             ('anthropic', self._ask_anthropic),
+            ('deepseek', self._ask_deepseek),
+            ('groq', self._ask_groq),
             ('google', self._ask_google),
         ]
         
@@ -2063,10 +2063,96 @@ async def on_message(message: discord.Message):
             drops_list = item.get('drops') if isinstance(item.get('drops'), list) else []
             traders = item.get('traders') or item.get('soldBy') or []
 
+            has_recipe_data = bool(recipe)
+            has_location_data = bool(found_in or location_field or spawn_rate or drops_list or traders)
+
+            if is_crafting_question and has_recipe_data:
+                embed = EmbedBuilder.item_embed(item, None)
+                reply = await reply_with_feedback(message, embed)
+                name = bot.search_engine.extract_name(item)
+                bot.context_manager.set_context(message.author.id, name, item)
+                bot.questions_answered += 1
+                return
+
+            if (is_obtain_question or is_location_question) and has_location_data:
+                obtain_lines = []
+                if found_in:
+                    obtain_lines.append(f"📍 يوجد غالباً في: {found_in}")
+                if location_field and location_field != found_in:
+                    obtain_lines.append(f"🗺️ الموقع: {location_field}")
+                if spawn_rate:
+                    obtain_lines.append(f"🎯 معدل الظهور في الداتا: {spawn_rate}")
+                if traders:
+                    if isinstance(traders, list):
+                        trader_names = [str(t) for t in traders if t]
+                        if trader_names:
+                            obtain_lines.append("🛒 يباع عند: " + ", ".join(trader_names))
+                    else:
+                        obtain_lines.append(f"🛒 يباع عند: {traders}")
+                if price:
+                    obtain_lines.append(f"💰 السعر المقدر في الداتا: {price}")
+                if drops_list:
+                    obtain_lines.append(f"⚔️ يسقط من عدد أعداء/بوس مذكور في الداتا: {len(drops_list)}")
+
+                custom_desc = "\n".join(obtain_lines) if obtain_lines else None
+                embed = EmbedBuilder.item_embed(item, custom_desc)
+                reply = await reply_with_feedback(message, embed)
+
+                if is_obtain_question and gun_parts_family_query:
+                    extra_results = []
+                    for r in results[1:]:
+                        extra_item = r['item']
+                        extra_name = bot.search_engine.extract_name(extra_item).lower()
+                        if 'gun parts' in extra_name:
+                            extra_results.append(extra_item)
+                    for extra_item in extra_results:
+                        extra_description = None
+                        if 'description' in extra_item:
+                            desc_val = extra_item['description']
+                            if isinstance(desc_val, dict):
+                                extra_description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
+                            else:
+                                extra_description = str(desc_val)
+                        extra_translated_desc = None
+                        if extra_description and extra_description != 'لا يوجد وصف':
+                            extra_translated_desc = await bot.ai_manager.translate_to_arabic(extra_description)
+                        extra_embed = EmbedBuilder.item_embed(extra_item, extra_translated_desc)
+                        extra_obtain_lines = []
+                        found_in_extra = extra_item.get('foundIn')
+                        if found_in_extra:
+                            extra_obtain_lines.append(f"- يوجد في: {found_in_extra}")
+                        craft_bench_extra = extra_item.get('craftBench')
+                        if craft_bench_extra:
+                            extra_obtain_lines.append(f"- يتصنع في: {craft_bench_extra}")
+                        if not is_crafting_question:
+                            recipe_extra = extra_item.get('recipe')
+                            if isinstance(recipe_extra, dict) and recipe_extra:
+                                extra_obtain_lines.append("- له وصفة تصنيع، شوف تفاصيل التصنيع")
+                        if extra_obtain_lines:
+                            extra_embed.add_field(
+                                name="طرق الحصول",
+                                value="\n".join(extra_obtain_lines),
+                                inline=False
+                            )
+                        await message.channel.send(embed=extra_embed)
+            
+                if is_location_question:
+                    location = item.get('location') or item.get('spawn_location') or item.get('map')
+                    if location:
+                        if isinstance(location, dict):
+                            location = location.get('en') or list(location.values())[0]
+                        map_embed = EmbedBuilder.map_embed(str(location), item)
+                        await message.channel.send(embed=map_embed)
+
+                name = bot.search_engine.extract_name(item)
+                bot.context_manager.set_context(message.author.id, name, item)
+                bot.questions_answered += 1
+                return
+
             context_parts = []
             if item_name_display:
                 context_parts.append(f"الاسم: {item_name_display}")
-            if description:
+            if description and not (is_obtain_question or is_location_question):
                 context_parts.append(f"الوصف: {description}")
             if item_type:
                 context_parts.append(f"النوع: {item_type}")
@@ -2080,7 +2166,7 @@ async def on_message(message: discord.Message):
                 context_parts.append(f"نسبة الظهور (إن وجدت في الداتا): {spawn_rate}")
             if price:
                 context_parts.append(f"السعر في الداتا: {price}")
-            if recipe:
+            if recipe and not is_crafting_question:
                 recipe_text = ", ".join(f"{k}: {v}" for k, v in recipe.items() if v is not None)
                 if recipe_text:
                     context_parts.append(f"وصفة التصنيع: {recipe_text}")
@@ -2090,17 +2176,21 @@ async def on_message(message: discord.Message):
                 context_parts.append("متوفر لدى بعض التجار في الداتا.")
 
             db_summary = " | ".join(context_parts) if context_parts else "لا توجد بيانات تفصيلية عن هذا الغرض في الداتا."
-
+            
+            ai_context = (
+                "هذه بيانات من داتا ARC Raiders عن الغرض المذكور، استخدمها كمصدر أساسي، "
+                "لكن مسموح لك تستفيد من معرفتك عن اللعبة وتضيف أماكن أو نصائح منطقية حتى لو ما كانت مكتوبة حرفياً في الداتا. "
+                "لو حسيت المعلومة تقريبية أو مو مؤكدة، وضّح ذلك للاعب.\n"
+                f"{db_summary}"
+            )
+            
             ai_question = (
                 f"سؤال اللاعب: {question}\n\n"
-                "استخدم فقط المعلومات التالية من داتا ARC Raiders عن هذا الغرض، "
-                "ولا تضف أماكن أو نسب سبون أو أرقام غير موجودة فيها:\n"
-                f"{db_summary}\n\n"
                 "اكتب إجابة واحدة قصيرة وواضحة بالعربي تشرح للاعب المطلوب حسب السؤال "
-                "(مثلاً أين يجد القطعة أو كيف تُستخدم) بدون قوائم طويلة."
+                "(مثلاً أين يجد القطعة أو كيف تُستخدم)، بدون قوائم طويلة."
             )
-
-            ai_result = await bot.ai_manager.ask_ai(ai_question)
+            
+            ai_result = await bot.ai_manager.ask_ai(ai_question, context=ai_context)
 
             if ai_result['success']:
                 embed = EmbedBuilder.success(
@@ -2114,58 +2204,9 @@ async def on_message(message: discord.Message):
                 )
 
             reply = await reply_with_feedback(message, embed)
-            if is_obtain_question and gun_parts_family_query:
-                extra_results = []
-                for r in results[1:]:
-                    extra_item = r['item']
-                    extra_name = bot.search_engine.extract_name(extra_item).lower()
-                    if 'gun parts' in extra_name:
-                        extra_results.append(extra_item)
-                for extra_item in extra_results:
-                    extra_description = None
-                    if 'description' in extra_item:
-                        desc_val = extra_item['description']
-                        if isinstance(desc_val, dict):
-                            extra_description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-                        else:
-                            extra_description = str(desc_val)
-                    extra_translated_desc = None
-                    if extra_description and extra_description != 'لا يوجد وصف':
-                        extra_translated_desc = await bot.ai_manager.translate_to_arabic(extra_description)
-                    extra_embed = EmbedBuilder.item_embed(extra_item, extra_translated_desc)
-                    extra_obtain_lines = []
-                    found_in_extra = extra_item.get('foundIn')
-                    if found_in_extra:
-                        extra_obtain_lines.append(f"- يوجد في: {found_in_extra}")
-                    craft_bench_extra = extra_item.get('craftBench')
-                    if craft_bench_extra:
-                        extra_obtain_lines.append(f"- يتصنع في: {craft_bench_extra}")
-                    if not is_crafting_question:
-                        recipe_extra = extra_item.get('recipe')
-                        if isinstance(recipe_extra, dict) and recipe_extra:
-                            extra_obtain_lines.append("- له وصفة تصنيع، شوف تفاصيل التصنيع")
-                    if extra_obtain_lines:
-                        extra_embed.add_field(
-                            name="طرق الحصول",
-                            value="\n".join(extra_obtain_lines),
-                            inline=False
-                        )
-                    await message.channel.send(embed=extra_embed)
-            
-            if is_location_question:
-                location = item.get('location') or item.get('spawn_location') or item.get('map')
-                if location:
-                    if isinstance(location, dict):
-                        location = location.get('en') or list(location.values())[0]
-                    
-                    map_embed = EmbedBuilder.map_embed(str(location), item)
-                    await message.channel.send(embed=map_embed)
 
             name = bot.search_engine.extract_name(item)
             bot.context_manager.set_context(message.author.id, name, item)
-            
-            # الأزرار تغني عن ردود ✅❌
-            
             bot.questions_answered += 1
             return
     
@@ -2173,10 +2214,9 @@ async def on_message(message: discord.Message):
         if ai_configured:
             safe_context = (
                 "سؤال عن مكان أو طريقة الحصول أو التصنيع في ARC Raiders "
-                "لكن الداتا الرسمية ما أعطت نتيجة واضحة. "
-                "لا تعطي مواقع أو نسب سبون أو أسماء أعداء من عندك. "
-                "لو ما عندك مصدر مؤكد، قل بصراحة إن المعلومات غير متوفرة، "
-                "واكتفِ بنصائح عامة جداً أو اقتراح أن اللاعب يجرب يسأل المجتمع."
+                "لكن الداتا المحلية ما أعطت نتيجة واضحة. "
+                "استخدم معرفتك العامة عن اللعبة وقدّم أفضل أماكن أو طرق أو نصائح تعرفها، "
+                "ولو كانت المعلومة تقريبية أو مبنية على خبرة اللاعبين فاذكر أنها تقريبية."
             )
             await ask_ai_and_reply(
                 message,
