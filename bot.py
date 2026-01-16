@@ -1,281 +1,120 @@
-"""
-╔══════════════════════════════════════════════════════════════╗
-║                    بوت دليل - Daleel Bot                      ║
-║              Q&A Bot for ARC Raiders Community                ║
-║                     By: SPECTRE Leader                        ║
-╚══════════════════════════════════════════════════════════════╝
-"""
+# بوت "دليل" - Daleel Bot (single-file, مُعدّل)
+# ---------------------------------------------------------
+# ملاحظة: انسخ هذا الملف كاملًا واستبدل به bot.py في مشروعك.
+# هذا الملف يجمع:
+# - تحميل البيانات من مجلد arcraiders-data/
+# - محرك بحث ذكي يدعم العربي/إنجليزي وتحسين المطابقة
+# - رد مختصر أولاً + زر "عرض التفاصيل" لعرض Embed مفصّل
+# - تكاملات AI كخيار احتياطي (إذا مفعلت مفاتيح API)
+# - تحكم بالسياق، منع سبام، أزرار تقييم، وإحصائيات
+# ---------------------------------------------------------
+
+import os
+import re
+import json
+import logging
+import asyncio
+from pathlib import Path
+from functools import lru_cache
+from difflib import SequenceMatcher
+from datetime import datetime, timedelta
+from typing import Optional, Tuple, List
 
 import discord
 from discord.ext import commands
 from discord import app_commands
-import os
-import json
-import asyncio
 import aiohttp
-import time
-import logging
-from datetime import datetime, timedelta
-from pathlib import Path
-from difflib import SequenceMatcher
-import re
+from dotenv import load_dotenv
 
-# ═══════════════════════════════════════════════════════════════
-# التهيئة - Configuration
-# ═══════════════════════════════════════════════════════════════
+# Optional: rapidfuzz gives better fuzzy matching if installed
+try:
+    from rapidfuzz import fuzz
+    HAS_RAPIDFUZZ = True
+except Exception:
+    HAS_RAPIDFUZZ = False
 
-# Environment Variables
+# -------------------------
+# Load environment
+# -------------------------
+load_dotenv()
+
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 ALLOWED_GUILD_ID = int(os.getenv('ALLOWED_GUILD_ID', '621014916173791288'))
 ALLOWED_CHANNEL_ID = int(os.getenv('ALLOWED_CHANNEL_ID', '1459709364301594848'))
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '1459724977346445429'))
 OWNER_ID = int(os.getenv('OWNER_ID', '595228721946820614'))
 
-# API Keys
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
-# Bot Settings
 BOT_NAME = "دليل"
 BOT_VERSION = "2.0.1"
 
-# قاموس عربي-إنجليزي للكلمات الشائعة
-ARABIC_TO_ENGLISH = {
-    # أسلحة
-    'سلاح': 'weapon',
-    'اسلحة': 'weapons',
-    'بندقية': 'rifle',
-    'مسدس': 'pistol',
-    'رشاش': 'smg',
-    'قناص': 'sniper',
-    'شوتقن': 'shotgun',
-    
-    # مخططات
-    'مخطوطة': 'blueprint',
-    'مخطوطه': 'blueprint',
-    'مخطط': 'blueprint',
-    'بلوبرنت': 'blueprint',
-    
-    # صناعة
-    'تصنيع': 'craft',
-    'صناعة': 'craft',
-    'صنع': 'craft',
-    'طاولة تصنيع': 'workbench',
-    'طاولة تصليح': 'workbench',
-    'طاولة تطوير': 'workbench',
-    'طاولة': 'bench',
-    'طاولات': 'bench',
-    'ادوات': 'materials',
-    'أدوات': 'materials',
-    'متطلبات': 'requirements',
-    'مواد': 'materials',
-    'عطني': '',
-    'اعطني': '',
-    'ابي': '',
-    'ابغى': '',
-    'وش': '',
-    'كيف': '',
-    'وين': '',
-    'اين': '',
-    'أين': '',
-    'مكان': '',
-    'موقع': '',
-    'طرق': '',
-    'طريقة': '',
-    'طريق': '',
-    'اسرع': '',
-    'أسرع': '',
-    'سبون': 'spawn',
-    'السبون': 'spawn',
-    'rate': '',
-    'spawnrate': '',
-    'دليل': '',
-    
-    # فليرات
-    'فلير': 'flare',
-    'الفلير': 'flare',
-    'فلارات': 'flare',
-    'الفلارات': 'flare',
-    
-    # بوس THE QUEEN
-    'كوين': 'queen',
-    'الكوين': 'queen',
-    
-    # ندرة
-    'ذهبي': 'legendary',
-    'ذهبية': 'legendary',
-    'ذهبيه': 'legendary',
-    'اسطوري': 'legendary',
-    'أسطوري': 'legendary',
-    'بنفسجي': 'epic',
-    'ملحمي': 'epic',
-    'ازرق': 'rare',
-    'أزرق': 'rare',
-    'نادر': 'rare',
-    'اخضر': 'uncommon',
-    'أخضر': 'uncommon',
-    'ابيض': 'common',
-    'أبيض': 'common',
-    'عادي': 'common',
-    
-    # مكونات
-    'مكونات': 'components',
-    'كهربائية': 'electrical',
-    'كهربائي': 'electrical',
-    'ميكانيكية': 'mechanical',
-    'متقدم': 'advanced',
-    'متقدمة': 'advanced',
-    'خام': 'raw',
-    
-    # أماكن
-    'خريطة': 'map',
-    'منطقة': 'zone',
-    'مصنع': 'factory',
-    'مستودع': 'warehouse',
-    
-    # عناصر
-    'درع': 'armor',
-    'خوذة': 'helmet',
-    'صدرية': 'vest',
-    'حقيبة': 'backpack',
-    'شنطة': 'backpack',
-    
-    # أعداء
-    'روبوت': 'bot',
-    'عدو': 'enemy',
-    'زعيم': 'boss',
-    
-    # مهارات
-    'مهارة': 'skill',
-    'مهارات': 'skills',
-    'شجرة': 'tree',
-    
-    # تجارة
-    'تاجر': 'trader',
-    'متجر': 'shop',
-    'شراء': 'buy',
-    'بيع': 'sell'
-}
-
-
-def is_comparative_question(text: str) -> bool:
-    lowered = text.lower()
-    tokens = [
-        " vs ",
-        "vs ",
-        " افضل ",
-        "أفضل",
-        "احسن",
-        "أحسن",
-        " or ",
-        " or",
-        "or ",
-        "ولا",
-        "مقارنة",
-        "better",
-        "best",
-    ]
-    return any(token in lowered for token in tokens)
-
-
-def is_strategy_question(text: str) -> bool:
-    lowered = text.lower()
-    tokens = [
-        "استراتيجية",
-        "strategy",
-        "كيف العب",
-        "كيف ألعب",
-        "build",
-        "بيلد",
-        "meta",
-        "ميتا",
-        "طريقة اللعب",
-    ]
-    return any(token in lowered for token in tokens)
-
-
-def is_explanatory_question(text: str) -> bool:
-    lowered = text.lower()
-    tokens = [
-        "ليش",
-        "لماذا",
-        "why",
-        "سبب",
-        "اشرح",
-        "شرح",
-        "explain",
-    ]
-    return any(token in lowered for token in tokens)
-
-
-def extract_intents(text: str) -> list:
-    intents = []
-    lowered = text.lower()
-    if any(token in lowered for token in ["أفضل", "أقوى", "أحسن", "أسرع", "أرخص", "أكثر", "vs", "مقارنة", "يستحق", "ولا", "or", "better", "best"]):
-        intents.append("comparative")
-    if any(token in lowered for token in ["استراتيجية", "strategy", "كيف العب", "كيف ألعب", "build", "بيلد", "طريقة اللعب", "نصائح", "أواجه", "أتعامل", "أفوز", "أهرب", "أقتل"]):
-        intents.append("strategy")
-    if any(token in lowered for token in ["ليش", "لماذا", "why", "سبب", "اشرح", "شرح", "explain", "يعني", "معنى", "تعريف", "وش", "ايش"]):
-        intents.append("explanation")
-    if any(token in lowered for token in ["بديل", "بدائل", "حل", "إذا ما لقيت", "ما حصلت", "ما عندي", "alternative"]):
-        intents.append("alternatives")
-    if any(token in lowered for token in ["مبتدئ", "محترف", "نصائح للمبتدئين", "نصائح للمحترفين", "مستوى"]):
-        intents.append("player_level")
-    if any(token in lowered for token in ["ميتا", "meta", "تحديث", "باتش", "patch", "تغييرات", "أقوى حالياً"]):
-        intents.append("meta")
-    if any(token in lowered for token in ["مجتمع", "لاعبين", "تجارب", "وش رأيكم", "أفضل طريقة جربتوها"]):
-        intents.append("community")
-    if not intents:
-        intents.append("general")
-    return intents
-
-
-def should_use_ai(text: str) -> bool:
-    intents = extract_intents(text)
-    for intent in intents:
-        if intent in ["comparative", "strategy", "explanation", "alternatives", "player_level", "meta"]:
-            return True
-    return False
-
-
-def is_ai_configured() -> bool:
-    return any([
-        DEEPSEEK_API_KEY,
-        GROQ_API_KEY,
-        OPENAI_API_KEY,
-        ANTHROPIC_API_KEY,
-        GOOGLE_API_KEY,
-    ])
-
-# روابط الصور من GitHub
-IMAGES_BASE_URL = "https://raw.githubusercontent.com/RaidTheory/arcraiders-data/main/images"
-
-# Colors
-COLORS = {
-    "success": 0x2ecc71,    # أخضر
-    "error": 0xe74c3c,      # أحمر
-    "warning": 0xf39c12,    # برتقالي
-    "info": 0x3498db,       # أزرق
-    "primary": 0x9b59b6,    # بنفسجي
-}
-
+# -------------------------
 # Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# -------------------------
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('Daleel')
 
-# ═══════════════════════════════════════════════════════════════
-# قاعدة البيانات - Database Manager
-# ═══════════════════════════════════════════════════════════════
+# -------------------------
+# Constants / Mappings
+# -------------------------
+IMAGES_BASE_URL = "https://raw.githubusercontent.com/RaidTheory/arcraiders-data/main/images"
 
+COLORS = {
+    "success": 0x2ecc71,
+    "error": 0xe74c3c,
+    "warning": 0xf39c12,
+    "info": 0x3498db,
+    "primary": 0x9b59b6,
+}
+
+ARABIC_TO_ENGLISH = {
+    # common tokens (extendable)
+    'سلاح': 'weapon', 'اسلحة': 'weapons', 'بندقية': 'rifle', 'مسدس': 'pistol',
+    'رشاش': 'smg', 'قناص': 'sniper', 'شوتقن': 'shotgun',
+    'مخطط': 'blueprint', 'مخطوطة': 'blueprint', 'تصنيع': 'craft',
+    'طاولة': 'workbench', 'ادوات': 'materials', 'أدوات': 'materials',
+    'مكونات': 'components', 'موقع': '', 'وين': '', 'اين': '', 'أين': '',
+    'كيف': '', 'وش': '', 'ابغى': '', 'ابي': '', 'اعطني': '', 'عطني': '',
+    'فلير': 'flare', 'كوين': 'queen', 'ذهبي': 'legendary', 'بنفسجي': 'epic',
+    'ازرق': 'rare', 'اخضر': 'uncommon', 'ابيض': 'common'
+}
+
+BASE_DIR = Path(__file__).parent
+DATA_DIR = BASE_DIR / "arcraiders-data"
+
+# -------------------------
+# Utilities: normalize and similarity
+# -------------------------
+def normalize_text(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = str(s).lower()
+    s = re.sub(r"[^\w\s\u0600-\u06FF\-]", " ", s)  # keep arabic letters, alnum, hyphen
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def translate_arabic_tokens(text: str) -> str:
+    return " ".join(ARABIC_TO_ENGLISH.get(t, t) for t in text.split())
+
+def similarity_score(a: str, b: str) -> float:
+    a = normalize_text(a)
+    b = normalize_text(b)
+    if HAS_RAPIDFUZZ:
+        try:
+            return fuzz.token_sort_ratio(a, b) / 100.0
+        except Exception:
+            pass
+    return SequenceMatcher(None, a, b).ratio()
+
+# -------------------------
+# Database Manager
+# -------------------------
 class DatabaseManager:
-    """مدير قاعدة البيانات - يحمل كل بيانات اللعبة"""
-    
     def __init__(self):
         self.items = []
         self.quests = []
@@ -287,457 +126,226 @@ class DatabaseManager:
         self.projects = []
         self.all_data = []
         self.loaded = False
-        
-    def load_all(self):
-        """تحميل كل البيانات من المجلدات"""
-        base_path = Path('arcraiders-data')
-        
+
+    def load_all(self) -> bool:
+        base_path = DATA_DIR
         if not base_path.exists():
             logger.warning("مجلد arcraiders-data غير موجود!")
             return False
-        
         try:
-            # ═══════════════════════════════════════════════════
-            # تحميل المجلدات
-            # ═══════════════════════════════════════════════════
-            
-            # تحميل Items
+            # load directories
+            for folder in ['items', 'quests', 'hideout', 'map-events']:
+                path = base_path / folder
+                if path.exists():
+                    for f in path.glob("*.json"):
+                        try:
+                            with open(f, 'r', encoding='utf-8') as fh:
+                                data = json.load(fh)
+                                if isinstance(data, list):
+                                    self.all_data.extend(data)
+                                elif isinstance(data, dict):
+                                    self.all_data.append(data)
+                        except Exception as e:
+                            logger.error(f"خطأ في تحميل {f}: {e}")
+
+            # load main files
+            for fname, dest in [
+                ('bots.json', 'bots'),
+                ('maps.json', 'maps'),
+                ('trades.json', 'trades'),
+                ('skillNodes.json', 'skills'),
+                ('projects.json', 'projects')
+            ]:
+                fpath = base_path / fname
+                if fpath.exists():
+                    try:
+                        with open(fpath, 'r', encoding='utf-8') as fh:
+                            data = json.load(fh)
+                            if isinstance(data, list):
+                                getattr(self, dest).extend(data)
+                                self.all_data.extend(data)
+                            elif isinstance(data, dict):
+                                getattr(self, dest).append(data)
+                                self.all_data.append(data)
+                    except Exception as e:
+                        logger.error(f"خطأ في تحميل {fname}: {e}")
+
+            # load items folder explicitly to items list for some logic
             items_path = base_path / 'items'
             if items_path.exists():
-                for file in items_path.glob('*.json'):
+                for f in items_path.glob('*.json'):
                     try:
-                        with open(file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
+                        with open(f, 'r', encoding='utf-8') as fh:
+                            data = json.load(fh)
                             if isinstance(data, list):
                                 self.items.extend(data)
                             elif isinstance(data, dict):
                                 self.items.append(data)
                     except Exception as e:
-                        logger.error(f"خطأ في تحميل {file}: {e}")
-            
-            # تحميل Quests
-            quests_path = base_path / 'quests'
-            if quests_path.exists():
-                for file in quests_path.glob('*.json'):
-                    try:
-                        with open(file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                self.quests.extend(data)
-                            elif isinstance(data, dict):
-                                self.quests.append(data)
-                    except Exception as e:
-                        logger.error(f"خطأ في تحميل {file}: {e}")
-            
-            # تحميل Hideout
-            hideout_path = base_path / 'hideout'
-            if hideout_path.exists():
-                for file in hideout_path.glob('*.json'):
-                    try:
-                        with open(file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                self.hideout.extend(data)
-                            elif isinstance(data, dict):
-                                self.hideout.append(data)
-                    except Exception as e:
-                        logger.error(f"خطأ في تحميل {file}: {e}")
-            
-            # تحميل Map Events
-            mapevents_path = base_path / 'map-events'
-            if mapevents_path.exists():
-                for file in mapevents_path.glob('*.json'):
-                    try:
-                        with open(file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                self.maps.extend(data)
-                            elif isinstance(data, dict):
-                                self.maps.append(data)
-                    except Exception as e:
-                        logger.error(f"خطأ في تحميل {file}: {e}")
-            
-            # ═══════════════════════════════════════════════════
-            # تحميل ملفات JSON الرئيسية
-            # ═══════════════════════════════════════════════════
-            
-            # bots.json - الأعداء
-            bots_file = base_path / 'bots.json'
-            if bots_file.exists():
-                try:
-                    with open(bots_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            self.bots = data
-                        elif isinstance(data, dict):
-                            self.bots = [data]
-                    logger.info(f"✅ تم تحميل {len(self.bots)} بوت/عدو")
-                except Exception as e:
-                    logger.error(f"خطأ في تحميل bots.json: {e}")
-            
-            # maps.json - الخرائط
-            maps_file = base_path / 'maps.json'
-            if maps_file.exists():
-                try:
-                    with open(maps_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            self.maps = data
-                        elif isinstance(data, dict):
-                            self.maps = [data]
-                    logger.info(f"✅ تم تحميل {len(self.maps)} خريطة")
-                except Exception as e:
-                    logger.error(f"خطأ في تحميل maps.json: {e}")
-            
-            # trades.json - التجارة
-            trades_file = base_path / 'trades.json'
-            if trades_file.exists():
-                try:
-                    with open(trades_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            self.trades = data
-                        elif isinstance(data, dict):
-                            self.trades = [data]
-                    logger.info(f"✅ تم تحميل {len(self.trades)} تجارة")
-                except Exception as e:
-                    logger.error(f"خطأ في تحميل trades.json: {e}")
-            
-            # skillNodes.json - المهارات
-            skills_file = base_path / 'skillNodes.json'
-            if skills_file.exists():
-                try:
-                    with open(skills_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            self.skills = data
-                        elif isinstance(data, dict):
-                            self.skills = [data]
-                    logger.info(f"✅ تم تحميل {len(self.skills)} مهارة")
-                except Exception as e:
-                    logger.error(f"خطأ في تحميل skillNodes.json: {e}")
-            
-            # projects.json - المشاريع
-            projects_file = base_path / 'projects.json'
-            if projects_file.exists():
-                try:
-                    with open(projects_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            self.projects = data
-                        elif isinstance(data, dict):
-                            self.projects = [data]
-                    logger.info(f"✅ تم تحميل {len(self.projects)} مشروع")
-                except Exception as e:
-                    logger.error(f"خطأ في تحميل projects.json: {e}")
-            
-            # ═══════════════════════════════════════════════════
-            # دمج كل البيانات
-            # ═══════════════════════════════════════════════════
-            self.all_data.extend(self.items)
-            self.all_data.extend(self.quests)
-            self.all_data.extend(self.hideout)
-            self.all_data.extend(self.bots)
-            self.all_data.extend(self.maps)
-            self.all_data.extend(self.trades)
-            self.all_data.extend(self.skills)
-            self.all_data.extend(self.projects)
-            
+                        logger.error(f"خطأ في تحميل item file {f}: {e}")
+
             self.loaded = True
-            logger.info(f"✅ تم تحميل {len(self.all_data)} عنصر من قاعدة البيانات")
+            logger.info(f"✅ تم تحميل قاعدة البيانات: {len(self.all_data)} عناصر إجمالاً")
             return True
-            
         except Exception as e:
             logger.error(f"خطأ في تحميل قاعدة البيانات: {e}")
             return False
-    
+
     def get_stats(self):
-        """إحصائيات قاعدة البيانات"""
         return {
             'items': len(self.items),
-            'quests': len(self.quests),
-            'hideout': len(self.hideout),
+            'total': len(self.all_data),
             'bots': len(self.bots),
             'maps': len(self.maps),
             'trades': len(self.trades),
             'skills': len(self.skills),
-            'projects': len(self.projects),
-            'total': len(self.all_data)
+            'projects': len(self.projects)
         }
 
-# ═══════════════════════════════════════════════════════════════
-# محرك البحث - Search Engine
-# ═══════════════════════════════════════════════════════════════
-
+# -------------------------
+# Search Engine
+# -------------------------
 class SearchEngine:
-    """محرك البحث الذكي - يدعم العربي والإنجليزي"""
-    
-    def __init__(self, database: DatabaseManager):
-        self.db = database
-        self.search_history = {}
-        
-    def normalize_text(self, text: str) -> str:
-        """تنظيف وتوحيد النص"""
-        if not text:
-            return ""
-        text = text.lower().strip()
-        # إزالة الأحرف الخاصة
-        text = re.sub(r'[^\w\s\u0600-\u06FF]', ' ', text)
-        # توحيد المسافات
-        text = re.sub(r'\s+', ' ', text)
-        return text
-    
-    def translate_arabic_query(self, query: str) -> str:
-        """ترجمة الكلمات العربية للإنجليزية"""
-        words = query.split()
-        translated = []
-        
-        for word in words:
-            word_lower = word.lower()
-            if word_lower in ARABIC_TO_ENGLISH:
-                translated.append(ARABIC_TO_ENGLISH[word_lower])
-            else:
-                translated.append(word)
-        
-        return ' '.join(translated)
-    
-    def calculate_similarity(self, text1: str, text2: str) -> float:
-        """حساب نسبة التشابه بين نصين"""
-        return SequenceMatcher(None, 
-                               self.normalize_text(text1), 
-                               self.normalize_text(text2)).ratio()
-    
-    def _calculate_match_score(self, query: str, text: str) -> float:
-        """حساب درجة التطابق"""
+    def __init__(self, db: DatabaseManager):
+        self.db = db
+
+    @staticmethod
+    def normalize(text: str) -> str:
+        return normalize_text(text)
+
+    def translate_query(self, q: str) -> str:
+        return translate_arabic_tokens(q)
+
+    def calculate_match_score(self, query: str, text: str) -> float:
         if not query or not text:
-            return 0
-        
-        # تطابق تام
-        if query == text:
+            return 0.0
+        q = normalize_text(query)
+        t = normalize_text(text)
+        if q == t:
             return 1.0
-        
-        # يحتوي على الاستعلام كامل
-        if query in text:
-            return 0.85 + (len(query) / len(text)) * 0.1
-        
-        # كل كلمات البحث موجودة
-        query_words = query.split()
-        text_lower = text.lower()
-        matches = sum(1 for word in query_words if word in text_lower)
-        if matches == len(query_words) and query_words:
-            return 0.8 + (matches / len(query_words)) * 0.15
-        
-        # بعض الكلمات موجودة
-        if matches > 0 and query_words:
-            return 0.5 + (matches / len(query_words)) * 0.3
-        
-        # تشابه جزئي
-        similarity = self.calculate_similarity(query, text)
-        return similarity * 0.7
-    
-    def search(self, query: str, limit: int = 5) -> list:
-        """البحث في قاعدة البيانات"""
+        if q in t:
+            return 0.85 + min(0.15, len(q)/max(1,len(t))*0.1)
+        q_words = q.split()
+        matches = sum(1 for w in q_words if w in t)
+        if matches == len(q_words) and matches>0:
+            return 0.8 + 0.15 * (matches/len(q_words))
+        if matches>0:
+            return 0.5 + 0.3 * (matches/len(q_words))
+        # fallback fuzzy
+        return similarity_score(q, t) * 0.7
+
+    def search(self, query: str, limit: int = 5) -> List[dict]:
         if not self.db.loaded:
             return []
-        
-        query_normalized = self.normalize_text(query)
-        query_translated = self.translate_arabic_query(query_normalized)
-        
+        q_norm = normalize_text(query)
+        q_trans = normalize_text(self.translate_query(query))
         results = []
-        
         for item in self.db.all_data:
             if not isinstance(item, dict):
                 continue
-                
-            score = 0
+            score = 0.0
             matched_field = None
-            
-            # البحث في الحقول المختلفة
-            searchable_fields = ['id', 'name', 'title', 'displayName', 'description', 
-                                'category', 'type', 'location', 'nameKey', 'rarity']
-            
-            for field in searchable_fields:
-                if field not in item or not item[field]:
+            fields = ['id', 'name', 'title', 'displayName', 'description', 'category', 'type', 'location', 'nameKey', 'rarity']
+            for field in fields:
+                if field not in item:
                     continue
-                
-                field_value = item[field]
-                
-                # لو القيمة dict (ترجمات متعددة)
-                if isinstance(field_value, dict):
-                    for lang, text in field_value.items():
-                        if not text or not isinstance(text, str):
+                val = item[field]
+                if isinstance(val, dict):
+                    for v in val.values():
+                        if not v or not isinstance(v, str):
                             continue
-                        
-                        text_normalized = self.normalize_text(text)
-                        
-                        # بحث بالكلمة الأصلية
-                        s1 = self._calculate_match_score(query_normalized, text_normalized)
-                        # بحث بالكلمة المترجمة
-                        s2 = self._calculate_match_score(query_translated, text_normalized)
-                        
-                        current_score = max(s1, s2)
-                        if current_score > score:
-                            score = current_score
+                        s1 = self.calculate_match_score(q_norm, v)
+                        s2 = self.calculate_match_score(q_trans, v)
+                        cur = max(s1, s2)
+                        if cur > score:
+                            score = cur
                             matched_field = field
-                    
                     if score >= 0.95:
                         break
-                
-                # لو القيمة string عادي
-                elif isinstance(field_value, str):
-                    field_normalized = self.normalize_text(field_value)
-                    
-                    s1 = self._calculate_match_score(query_normalized, field_normalized)
-                    s2 = self._calculate_match_score(query_translated, field_normalized)
-                    
-                    current_score = max(s1, s2)
-                    if current_score > score:
-                        score = current_score
+                elif isinstance(val, str):
+                    s1 = self.calculate_match_score(q_norm, val)
+                    s2 = self.calculate_match_score(q_trans, val)
+                    cur = max(s1, s2)
+                    if cur > score:
+                        score = cur
                         matched_field = field
-            
             if score > 0.3:
-                results.append({
-                    'item': item,
-                    'score': score,
-                    'matched_field': matched_field
-                })
-        
+                results.append({'item': item, 'score': score, 'matched_field': matched_field})
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:limit]
-    
+
     def extract_name(self, item: dict) -> str:
-        """استخراج الاسم من العنصر - الإنجليزي للأسماء"""
-        name_fields = ['name', 'title', 'displayName', 'nameKey']
-        
-        for field in name_fields:
-            if field in item:
-                value = item[field]
-                
-                # لو القيمة dict (ترجمات متعددة) - الإنجليزي أولاً
-                if isinstance(value, dict):
-                    return value.get('en') or value.get('ar') or list(value.values())[0]
-                
-                # لو القيمة string عادي
-                elif isinstance(value, str) and value:
-                    return value
-        
-        return "غير معروف"
-    
-    def find_similar(self, query: str, limit: int = 3) -> list:
-        """إيجاد عناصر مشابهة للاقتراحات"""
-        results = self.search(query, limit=limit)
-        suggestions = []
-        
-        for r in results:
-            item = r['item']
-            name = self.extract_name(item)
-            if name and name != "Unknown" and name not in suggestions:
-                suggestions.append(name)
-        
-        return suggestions
+        for k in ['name', 'title', 'displayName', 'nameKey']:
+            if k in item:
+                v = item[k]
+                if isinstance(v, dict):
+                    return v.get('ar') or v.get('en') or next(iter(v.values()))
+                elif isinstance(v, str):
+                    return v
+        return item.get('id') or 'غير معروف'
 
-# ═══════════════════════════════════════════════════════════════
-# نظام AI - AI Manager
-# ═══════════════════════════════════════════════════════════════
+    def find_similar(self, query: str, limit: int = 3) -> List[str]:
+        res = self.search(query, limit=limit)
+        names = []
+        for r in res:
+            n = self.extract_name(r['item'])
+            if n and n not in names:
+                names.append(n)
+        return names
 
+# -------------------------
+# AI Manager
+# -------------------------
 class AIManager:
-    """مدير الذكاء الاصطناعي - 5 مستويات احتياطية"""
-    
     def __init__(self):
         self.daily_usage = 0
         self.daily_limit = 50
         self.last_reset = datetime.now().date()
-        self.usage_stats = {
-            'deepseek': 0,
-            'groq': 0,
-            'openai': 0,
-            'anthropic': 0,
-            'google': 0
-        }
-        # كاش للترجمات عشان ما نكرر
+        self.usage_stats = {'deepseek':0,'groq':0,'openai':0,'anthropic':0,'google':0}
         self.translation_cache = {}
-    
-    async def translate_to_arabic(self, text: str) -> str:
-        """ترجمة نص للعربي - سريع بـ Groq"""
-        if not text or len(text) < 3:
-            return text
-        
-        # تحقق من الكاش
-        cache_key = text[:100]  # أول 100 حرف كـ key
-        if cache_key in self.translation_cache:
-            return self.translation_cache[cache_key]
-        
-        # لو النص عربي أصلاً
-        if any('\u0600' <= c <= '\u06FF' for c in text):
-            return text
-        
-        try:
-            # استخدم Groq للترجمة السريعة
-            if GROQ_API_KEY:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        'https://api.groq.com/openai/v1/chat/completions',
-                        headers={
-                            'Authorization': f'Bearer {GROQ_API_KEY}',
-                            'Content-Type': 'application/json'
-                        },
-                        json={
-                            'model': 'llama-3.3-70b-versatile',
-                            'messages': [
-                                {'role': 'system', 'content': 'أنت مترجم. ترجم النص التالي للعربية فقط بدون أي إضافات أو شرح. لو النص قصير جداً أو اسم، اكتبه كما هو.'},
-                                {'role': 'user', 'content': text}
-                            ],
-                            'max_tokens': 300,
-                            'temperature': 0.3
-                        },
-                        timeout=aiohttp.ClientTimeout(total=10)
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            translated = data['choices'][0]['message']['content'].strip()
-                            # حفظ في الكاش
-                            self.translation_cache[cache_key] = translated
-                            return translated
-        except Exception as e:
-            logger.warning(f"خطأ في الترجمة: {e}")
-        
-        return text  # رجع النص الأصلي لو فشلت الترجمة
-    
-    def check_daily_limit(self) -> bool:
-        """فحص الحد اليومي"""
+
+    def check_daily(self) -> bool:
         today = datetime.now().date()
         if today > self.last_reset:
             self.daily_usage = 0
             self.last_reset = today
         return self.daily_usage < self.daily_limit
-    
+
+    async def translate_to_arabic(self, text: str) -> str:
+        if not text or len(text)<3:
+            return text
+        key = text[:120]
+        if key in self.translation_cache:
+            return self.translation_cache[key]
+        if any('\u0600' <= c <= '\u06FF' for c in text):
+            return text
+        # use Groq/OpenAI/Google per availability (best-effort)
+        try:
+            if GROQ_API_KEY:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        'https://api.groq.com/openai/v1/chat/completions',
+                        headers={'Authorization': f'Bearer {GROQ_API_KEY}','Content-Type':'application/json'},
+                        json={'model':'llama-3.3-70b-versatile','messages':[{'role':'system','content':'ترجم النص التالي للعربية دون شرح.'},{'role':'user','content':text}], 'max_tokens':300,'temperature':0.2},
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
+                        if resp.status==200:
+                            data = await resp.json()
+                            out = data['choices'][0]['message']['content'].strip()
+                            self.translation_cache[key] = out
+                            return out
+        except Exception:
+            pass
+        return text
+
     async def ask_ai(self, question: str, context: str = "") -> dict:
-        """سؤال الـ AI مع نظام الاحتياطي"""
-        
-        if not is_ai_configured():
-            return {
-                'success': False,
-                'answer': "الذكاء الاصطناعي غير مفعّل حالياً.",
-                'provider': None
-            }
-        
-        if not self.check_daily_limit():
-            return {
-                'success': False,
-                'answer': "⚠️ تم الوصول للحد اليومي من استخدام AI",
-                'provider': None
-            }
-        
-        system_prompt = f"""أنت "دليل" - بوت مساعد لمجتمع ARC Raiders العربي.
-قواعد الرد:
-1. رد بالعربي دائماً.
-2. كن مختصراً ومباشراً قدر الإمكان.
-3. لو ما تعرف الجواب بدقة أو ما عندك مصدر موثوق، قل بصراحة إن المعلومات غير مؤكدة ولا تؤلف أرقاماً أو أماكن أو أسماء.
-4. ركز على لعبة ARC Raiders فقط، ولا تتكلم عن ألعاب ثانية.
-5. لا تكرر نصوصاً طويلة أو قوائم مملة؛ استخدم جمل قليلة مفيدة.
-{f'السياق: {context}' if context else ''}"""
-        
-        # ترتيب المزودين
+        if not any([DEEPSEEK_API_KEY,GROQ_API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY,GOOGLE_API_KEY]):
+            return {'success':False,'answer':'الذكاء الاصطناعي غير مفعل.','provider':None}
+        if not self.check_daily():
+            return {'success':False,'answer':'تم الوصول للحد اليومي للـ AI.','provider':None}
+        # system prompt: concise Arabic
+        system_prompt = f"""أنت "دليل" - بوت مختصر باللغة العربية لمجتمع ARC Raiders. أجب بجملة أو جملتين واضحين، ثم اختِمُّ بـ "لمزيد: اضغط عرض التفاصيل". لا تكتب فلسفة أو شروحات طويلة. {('سياق: '+context) if context else ''}"""
+        # try providers in order
         providers = [
             ('deepseek', self._ask_deepseek),
             ('groq', self._ask_groq),
@@ -745,335 +353,150 @@ class AIManager:
             ('anthropic', self._ask_anthropic),
             ('google', self._ask_google),
         ]
-        
-        for provider_name, provider_func in providers:
+        for name, func in providers:
             try:
-                result = await provider_func(question, system_prompt)
-                if result:
+                res = await func(question, system_prompt)
+                if res:
                     self.daily_usage += 1
-                    self.usage_stats[provider_name] += 1
-                    return {
-                        'success': True,
-                        'answer': result,
-                        'provider': provider_name
-                    }
+                    self.usage_stats[name] = self.usage_stats.get(name,0)+1
+                    return {'success':True,'answer':res,'provider':name}
             except Exception as e:
-                logger.warning(f"فشل {provider_name}: {e}")
+                logger.warning(f"AI provider {name} failed: {e}")
                 continue
-        
-        return {
-            'success': False,
-            'answer': "عذراً، حدث خطأ في الاتصال بالـ AI",
-            'provider': None
-        }
-    
-    async def _ask_deepseek(self, question: str, system_prompt: str) -> str:
-        """DeepSeek API"""
-        if not DEEPSEEK_API_KEY:
-            return None
-            
+        return {'success':False,'answer':'فشل الاتصال بمزودي AI','provider':None}
+
+    async def _ask_deepseek(self, question, system_prompt):
+        if not DEEPSEEK_API_KEY: return None
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                'https://api.deepseek.com/v1/chat/completions',
-                headers={
-                    'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
-                    'Content-Type': 'application/json'
-                },
-                json={
-                    'model': 'deepseek-chat',
-                    'messages': [
-                        {'role': 'system', 'content': system_prompt},
-                        {'role': 'user', 'content': question}
-                    ],
-                    'max_tokens': 500,
-                    'temperature': 0.7
-                },
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['choices'][0]['message']['content']
-        return None
-    
-    async def _ask_groq(self, question: str, system_prompt: str) -> str:
-        """Groq API"""
-        if not GROQ_API_KEY:
-            return None
-            
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                'https://api.groq.com/openai/v1/chat/completions',
-                headers={
-                    'Authorization': f'Bearer {GROQ_API_KEY}',
-                    'Content-Type': 'application/json'
-                },
-                json={
-                    'model': 'llama-3.3-70b-versatile',
-                    'messages': [
-                        {'role': 'system', 'content': system_prompt},
-                        {'role': 'user', 'content': question}
-                    ],
-                    'max_tokens': 500,
-                    'temperature': 0.7
-                },
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['choices'][0]['message']['content']
-        return None
-    
-    async def _ask_openai(self, question: str, system_prompt: str) -> str:
-        """OpenAI API"""
-        if not OPENAI_API_KEY:
-            return None
-            
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                'https://api.openai.com/v1/chat/completions',
-                headers={
-                    'Authorization': f'Bearer {OPENAI_API_KEY}',
-                    'Content-Type': 'application/json'
-                },
-                json={
-                    'model': 'gpt-4o-mini',
-                    'messages': [
-                        {'role': 'system', 'content': system_prompt},
-                        {'role': 'user', 'content': question}
-                    ],
-                    'max_tokens': 500,
-                    'temperature': 0.7
-                },
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['choices'][0]['message']['content']
-        return None
-    
-    async def _ask_anthropic(self, question: str, system_prompt: str) -> str:
-        """Anthropic Claude API"""
-        if not ANTHROPIC_API_KEY:
-            return None
-            
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                'https://api.anthropic.com/v1/messages',
-                headers={
-                    'x-api-key': ANTHROPIC_API_KEY,
-                    'Content-Type': 'application/json',
-                    'anthropic-version': '2023-06-01'
-                },
-                json={
-                    'model': 'claude-3-haiku-20240307',
-                    'max_tokens': 500,
-                    'system': system_prompt,
-                    'messages': [
-                        {'role': 'user', 'content': question}
-                    ]
-                },
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['content'][0]['text']
-        return None
-    
-    async def _ask_google(self, question: str, system_prompt: str) -> str:
-        """Google Gemini API"""
-        if not GOOGLE_API_KEY:
-            return None
-            
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f'https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}',
-                headers={'Content-Type': 'application/json'},
-                json={
-                    'contents': [{
-                        'parts': [{'text': f"{system_prompt}\n\nسؤال: {question}"}]
-                    }],
-                    'generationConfig': {
-                        'maxOutputTokens': 500,
-                        'temperature': 0.7
-                    }
-                },
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['candidates'][0]['content']['parts'][0]['text']
+            async with session.post('https://api.deepseek.com/v1/chat/completions',
+                                    headers={'Authorization':f'Bearer {DEEPSEEK_API_KEY}','Content-Type':'application/json'},
+                                    json={'model':'deepseek-chat','messages':[{'role':'system','content':system_prompt},{'role':'user','content':question}], 'max_tokens':400,'temperature':0.5},
+                                    timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                if resp.status==200:
+                    data = await resp.json()
+                    return data['choices'][0]['message']['content'].strip()
         return None
 
-# ═══════════════════════════════════════════════════════════════
-# نظام السياق - Context Manager
-# ═══════════════════════════════════════════════════════════════
+    async def _ask_groq(self, question, system_prompt):
+        if not GROQ_API_KEY: return None
+        async with aiohttp.ClientSession() as session:
+            async with session.post('https://api.groq.com/openai/v1/chat/completions',
+                                    headers={'Authorization':f'Bearer {GROQ_API_KEY}','Content-Type':'application/json'},
+                                    json={'model':'llama-3.3-70b-versatile','messages':[{'role':'system','content':system_prompt},{'role':'user','content':question}], 'max_tokens':400,'temperature':0.5},
+                                    timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                if resp.status==200:
+                    data = await resp.json()
+                    return data['choices'][0]['message']['content'].strip()
+        return None
 
+    async def _ask_openai(self, question, system_prompt):
+        if not OPENAI_API_KEY: return None
+        async with aiohttp.ClientSession() as session:
+            async with session.post('https://api.openai.com/v1/chat/completions',
+                                    headers={'Authorization':f'Bearer {OPENAI_API_KEY}','Content-Type':'application/json'},
+                                    json={'model':'gpt-4o-mini','messages':[{'role':'system','content':system_prompt},{'role':'user','content':question}], 'max_tokens':400,'temperature':0.5},
+                                    timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                if resp.status==200:
+                    data = await resp.json()
+                    return data['choices'][0]['message']['content'].strip()
+        return None
+
+    async def _ask_anthropic(self, question, system_prompt):
+        if not ANTHROPIC_API_KEY: return None
+        async with aiohttp.ClientSession() as session:
+            async with session.post('https://api.anthropic.com/v1/messages',
+                                    headers={'x-api-key':ANTHROPIC_API_KEY,'Content-Type':'application/json'},
+                                    json={'model':'claude-3-haiku-20240307','system':system_prompt,'messages':[{'role':'user','content':question}], 'max_tokens':400},
+                                    timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                if resp.status==200:
+                    data = await resp.json()
+                    # adapt to Claude response format
+                    if isinstance(data, dict):
+                        return data.get('content', [{'type':'output_text','text':''}])[0].get('text','').strip()
+        return None
+
+    async def _ask_google(self, question, system_prompt):
+        if not GOOGLE_API_KEY: return None
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f'https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}',
+                                    headers={'Content-Type':'application/json'},
+                                    json={'contents':[{'parts':[{'text':f"{system_prompt}\n\nسؤال: {question}"}]}],'generationConfig':{'maxOutputTokens':400,'temperature':0.5}},
+                                    timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                if resp.status==200:
+                    data = await resp.json()
+                    return data['candidates'][0]['content']['parts'][0]['text'].strip()
+        return None
+
+# -------------------------
+# Context Manager
+# -------------------------
 class ContextManager:
-    """مدير سياق المحادثات - يتذكر آخر سؤال لكل مستخدم"""
-    
-    def __init__(self, timeout_minutes: int = 5):
-        self.contexts = {}  # {user_id: {'item': ..., 'timestamp': ...}}
+    def __init__(self, timeout_minutes:int=5):
+        self.contexts = {}
         self.timeout = timedelta(minutes=timeout_minutes)
-    
-    def set_context(self, user_id: int, item_name: str, item_data: dict = None):
-        """حفظ السياق للمستخدم"""
-        self.contexts[user_id] = {
-            'item': item_name,
-            'data': item_data,
-            'timestamp': datetime.now()
-        }
-    
-    def get_context(self, user_id: int) -> dict:
-        """جلب السياق للمستخدم"""
-        if user_id not in self.contexts:
-            return None
-        
-        context = self.contexts[user_id]
-        if datetime.now() - context['timestamp'] > self.timeout:
+    def set_context(self, user_id:int, item_name:str, item_data:dict=None):
+        self.contexts[user_id] = {'item':item_name,'data':item_data,'timestamp':datetime.now()}
+    def get_context(self, user_id:int):
+        c = self.contexts.get(user_id)
+        if not c: return None
+        if datetime.now() - c['timestamp'] > self.timeout:
             del self.contexts[user_id]
             return None
-        
-        return context
-    
-    def clear_context(self, user_id: int):
-        """مسح السياق"""
-        if user_id in self.contexts:
-            del self.contexts[user_id]
-    
-    def inject_context(self, user_id: int, question: str) -> str:
-        """حقن السياق في السؤال"""
-        context = self.get_context(user_id)
-        if not context:
-            return question
-        
-        # كلمات تدل على سؤال متابعة
-        follow_up_keywords = [
-            'نسبة', 'spawn', 'الموقع', 'location', 'وين', 'where',
-            'كم', 'how much', 'الندرة', 'rarity',
-            'طريقة', 'افضل طريقة', 'أفضل طريقة',
-            'استراتيجية', 'strategy',
-            'how to', 'how do', 'use', 'استعمل'
-        ]
-        
-        question_lower = question.lower()
-        is_follow_up = any(keyword in question_lower for keyword in follow_up_keywords)
-        
-        # إذا السؤال قصير جداً ويبدو متابعة
-        if is_follow_up and len(question.split()) <= 5:
-            return f"{context['item']} {question}"
-        
+        return c
+    def clear_context(self, user_id:int):
+        if user_id in self.contexts: del self.contexts[user_id]
+    def inject_context(self, user_id:int, question:str) -> str:
+        ctx = self.get_context(user_id)
+        if not ctx: return question
+        follow_up_keywords = ['وين','where','نسبة','spawn','location','كم','how','طريقة','كيف','استراتيجية']
+        ql = question.lower()
+        is_follow = any(k in ql for k in follow_up_keywords)
+        if is_follow and len(question.split())<=5:
+            return f"{ctx['item']} {question}"
         return question
 
-# ═══════════════════════════════════════════════════════════════
-# نظام الحماية - Anti-Spam
-# ═══════════════════════════════════════════════════════════════
-
+# -------------------------
+# Anti-Spam
+# -------------------------
 class AntiSpam:
-    """نظام منع السبام - 3 أسئلة/دقيقة"""
-    
-    def __init__(self, max_messages: int = 3, window_seconds: int = 60):
-        self.user_messages = {}  # {user_id: [timestamps]}
+    def __init__(self, max_messages:int=3, window_seconds:int=60):
+        self.user_messages = {}
         self.max_messages = max_messages
         self.window = timedelta(seconds=window_seconds)
-    
-    def check(self, user_id: int) -> tuple:
-        """فحص إذا المستخدم يقدر يرسل"""
+    def check(self, user_id:int):
         now = datetime.now()
-        
-        if user_id not in self.user_messages:
-            self.user_messages[user_id] = []
-        
-        # تنظيف الرسائل القديمة
-        self.user_messages[user_id] = [
-            ts for ts in self.user_messages[user_id]
-            if now - ts < self.window
-        ]
-        
-        if len(self.user_messages[user_id]) >= self.max_messages:
-            oldest = min(self.user_messages[user_id])
+        lst = self.user_messages.get(user_id, [])
+        lst = [ts for ts in lst if now - ts < self.window]
+        if len(lst) >= self.max_messages:
+            oldest = min(lst)
             wait_time = int((oldest + self.window - now).total_seconds())
             return False, wait_time
-        
-        self.user_messages[user_id].append(now)
+        lst.append(now)
+        self.user_messages[user_id] = lst
         return True, 0
 
-# ═══════════════════════════════════════════════════════════════
-# منشئ الـ Embeds
-# ═══════════════════════════════════════════════════════════════
-
+# -------------------------
+# Embed Builder & Utilities
+# -------------------------
 class EmbedBuilder:
-    """منشئ الـ Embeds الجميلة"""
-    
     @staticmethod
-    def success(title: str, description: str) -> discord.Embed:
-        embed = discord.Embed(
-            title=f"✅ {title}",
-            description=description,
-            color=COLORS["success"],
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text=f"🤖 {BOT_NAME}")
-        return embed
+    def clean_description(text:str) -> str:
+        if not text: return text
+        return text.replace('запасная','احتياطية')
 
     @staticmethod
-    def error(title: str, description: str) -> discord.Embed:
-        embed = discord.Embed(
-            title=f"❌ {title}",
-            description=description,
-            color=COLORS["error"],
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text=f"🤖 {BOT_NAME}")
-        return embed
-    
-    @staticmethod
-    def warning(title: str, description: str) -> discord.Embed:
-        embed = discord.Embed(
-            title=f"⚠️ {title}",
-            description=description,
-            color=COLORS["warning"],
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text=f"🤖 {BOT_NAME}")
-        return embed
-    
-    @staticmethod
-    def info(title: str, description: str) -> discord.Embed:
-        embed = discord.Embed(
-            title=f"ℹ️ {title}",
-            description=description,
-            color=COLORS["info"],
-            timestamp=datetime.now()
-        )
-        embed.set_footer(text=f"🤖 {BOT_NAME}")
-        return embed
+    def extract_field(item:dict, field:str) -> Optional[str]:
+        v = item.get(field)
+        if not v: return None
+        if isinstance(v, dict):
+            return v.get('en') or v.get('ar') or next(iter(v.values()), None)
+        return str(v)
 
     @staticmethod
-    def extract_field(item: dict, field: str) -> str:
-        """استخراج قيمة حقل - الإنجليزي للأسماء"""
-        if field not in item:
-            return None
-        
-        value = item[field]
-        
-        if isinstance(value, dict):
-            if not value:
-                return None
-            primary = value.get('en') or value.get('ar')
-            if primary:
-                return primary
-            first = next(iter(value.values()), None)
-            return str(first) if first is not None else None
-        
-        return str(value) if value else None
-    
-    @staticmethod
-    def get_image_url(item: dict) -> str:
-        """الحصول على رابط صورة العنصر"""
-        img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
-        if img_url and isinstance(img_url, str) and img_url.startswith('http'):
-            return img_url
-        
+    def get_image_url(item:dict) -> Optional[str]:
+        img = item.get('image') or item.get('icon') or item.get('imageUrl')
+        if img and isinstance(img, str) and img.startswith('http'):
+            return img
         filename = item.get('imageFilename')
         if filename and isinstance(filename, str):
             if filename.startswith('http'):
@@ -1081,173 +504,116 @@ class EmbedBuilder:
             if filename.startswith('/'):
                 filename = filename.lstrip('/')
             return f"{IMAGES_BASE_URL}/{filename}"
-        
-        item_id = item.get('id') or item.get('itemId') or item.get('slug')
+        item_id = item.get('id') or item.get('slug') or item.get('itemId')
         if item_id:
-            item_type = item.get('type') or item.get('category') or ''
-            if isinstance(item_type, dict):
-                item_type = item_type.get('en', '')
-            
-            item_type_lower = str(item_type).lower()
-            
-            if 'bot' in item_type_lower or 'enemy' in item_type_lower:
-                folder = 'bots'
-            elif 'map' in item_type_lower:
-                folder = 'maps'
-            elif 'trader' in item_type_lower:
-                folder = 'traders'
-            elif 'workshop' in item_type_lower:
-                folder = 'workshop'
+            itype = item.get('type') or item.get('category') or ''
+            if isinstance(itype, dict):
+                itype = itype.get('en','')
+            itype = str(itype).lower()
+            if 'bot' in itype or 'enemy' in itype:
+                folder='bots'
+            elif 'map' in itype:
+                folder='maps'
+            elif 'trader' in itype:
+                folder='traders'
             else:
-                folder = 'items'
-            
+                folder='items'
             return f"{IMAGES_BASE_URL}/{folder}/{item_id}.png"
-        
         return None
-    
-    @staticmethod
-    def clean_description(text: str) -> str:
-        """تنظيف الوصف من النصوص الروسية والشوائب"""
-        if not text:
-            return text
-        text = text.replace('запасية', 'احتياطية')
-        return text
 
     @staticmethod
-    def item_embed(item: dict, translated_desc: str = None) -> discord.Embed:
-        """إنشاء Embed لعنصر من اللعبة - الاسم إنجليزي والباقي عربي"""
-        name = None
-        for field in ['name', 'title', 'displayName', 'nameKey']:
-            if field in item:
-                value = item[field]
-                if isinstance(value, dict):
-                    name = value.get('en') or value.get('ar') or list(value.values())[0]
-                elif value:
-                    name = str(value)
-                if name:
-                    break
-        name = name or 'غير معروف'
-        
+    def item_embed(item:dict, translated_desc:Optional[str]=None) -> discord.Embed:
+        name = EmbedBuilder.extract_field(item, 'name') or item.get('id') or 'غير معروف'
         if translated_desc:
-            description = EmbedBuilder.clean_description(translated_desc)
+            desc = translated_desc
         else:
-            description = None
-            if 'description' in item:
-                desc_val = item['description']
-                if isinstance(desc_val, dict):
-                    description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-                else:
-                    description = str(desc_val)
-            description = EmbedBuilder.clean_description(description or 'لا يوجد وصف')
-        
-        minimal_mode = False
-        if translated_desc:
-            td = str(translated_desc)
-            if any(x in td for x in ["المنطقة:", "الموقع:", "نسبة الظهور", "التجار", "السعر"]):
-                minimal_mode = True
-        
-        embed = discord.Embed(
-            title=f"📦 {name}",
-            description=description[:500] if description else "لا يوجد وصف",
-            color=COLORS["primary"],
-            timestamp=datetime.now()
-        )
-        
-        if not minimal_mode:
-            category = EmbedBuilder.extract_field(item, 'category')
-            if category:
-                embed.add_field(name="📁 الفئة", value=category, inline=True)
-            
-            item_type = EmbedBuilder.extract_field(item, 'type')
-            if item_type:
-                embed.add_field(name="🏷️ النوع", value=item_type, inline=True)
-            
-            rarity = EmbedBuilder.extract_field(item, 'rarity')
-            if rarity:
-                rarity_ar = {
-                    'common': 'عادي ⚪',
-                    'uncommon': 'غير شائع 🟢', 
-                    'rare': 'نادر 🔵',
-                    'epic': 'ملحمي 🟣',
-                    'legendary': 'أسطوري 🟡'
-                }.get(rarity.lower(), rarity)
-                embed.add_field(name="💎 الندرة", value=rarity_ar, inline=True)
-            
-            location = EmbedBuilder.extract_field(item, 'location')
-            if location:
-                embed.add_field(name="📍 الموقع", value=location, inline=True)
-            
-            spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
-            if spawn_rate:
-                embed.add_field(name="📊 نسبة الظهور", value=f"{spawn_rate}%", inline=True)
-            
-            price = item.get('price') or item.get('value')
-            if price:
-                embed.add_field(name="💰 السعر", value=str(price), inline=True)
-        
-        suppress_obtain_field = False
-        if translated_desc:
-            td = str(translated_desc)
-            if any(x in td for x in ["المنطقة:", "الموقع:", "نسبة الظهور", "التجار", "السعر"]):
-                suppress_obtain_field = True
-                if minimal_mode:
-                    suppress_obtain_field = True
-        
-        obtain_lines = []
-        found_in = item.get('foundIn')
-        if found_in:
-            obtain_lines.append(f"- يوجد في: {found_in}")
-        craft_bench = item.get('craftBench')
-        if craft_bench:
-            obtain_lines.append(f"- يتصنع في: {craft_bench}")
+            d = item.get('description')
+            if isinstance(d, dict):
+                desc = d.get('ar') or d.get('en') or next(iter(d.values()), '')
+            else:
+                desc = d or 'لا يوجد وصف'
+        desc = EmbedBuilder.clean_description(desc)[:800]
+        embed = discord.Embed(title=f"📦 {name}", description=desc, color=COLORS['primary'], timestamp=datetime.now())
+        # fields
+        category = EmbedBuilder.extract_field(item, 'category')
+        if category: embed.add_field(name="📁 الفئة", value=category, inline=True)
+        itype = EmbedBuilder.extract_field(item, 'type')
+        if itype: embed.add_field(name="🏷️ النوع", value=itype, inline=True)
+        rarity = EmbedBuilder.extract_field(item, 'rarity')
+        if rarity:
+            rar_map={'common':'عادي ⚪','uncommon':'غير شائع 🟢','rare':'نادر 🔵','epic':'ملحمي 🟣','legendary':'أسطوري 🟡'}
+            embed.add_field(name="💎 الندرة", value=rar_map.get(rarity.lower(), rarity), inline=True)
+        found_in = EmbedBuilder.extract_field(item, 'location') or item.get('foundIn')
+        if found_in: embed.add_field(name="📍 الموقع", value=str(found_in), inline=False)
+        price = item.get('price') or item.get('value')
+        if price: embed.add_field(name="💰 السعر", value=str(price), inline=True)
+        spawn = item.get('spawnRate') or item.get('spawn_rate')
+        if spawn: embed.add_field(name="📊 نسبة الظهور", value=str(spawn), inline=True)
+        # obtain field
+        obtain_lines=[]
+        if item.get('foundIn'): obtain_lines.append(f"- يوجد في: {item.get('foundIn')}")
+        if item.get('craftBench'): obtain_lines.append(f"- يتصنع في: {item.get('craftBench')}")
         recipe = item.get('recipe')
-        if isinstance(recipe, dict) and recipe:
-            obtain_lines.append("- له وصفة تصنيع، شوف تفاصيل التصنيع")
+        if isinstance(recipe, dict) and recipe: obtain_lines.append("- له وصفة تصنيع، شوف التفاصيل")
         drops = item.get('drops')
-        if isinstance(drops, list) and drops:
-            obtain_lines.append(f"- يسقط من: {len(drops)} عدو/بوس")
+        if isinstance(drops, list) and drops: obtain_lines.append(f"- يسقط من: {len(drops)} مصدر/مصادر")
         traders = item.get('traders') or item.get('soldBy')
-        if traders:
-            obtain_lines.append("- متوفر عند التجار")
-        if obtain_lines and not suppress_obtain_field:
+        if traders: obtain_lines.append("- متوفر لدى التجار")
+        if obtain_lines:
             embed.add_field(name="طرق الحصول", value="\n".join(obtain_lines), inline=False)
-        
-        img_url = EmbedBuilder.get_image_url(item)
-        if img_url:
-            embed.set_thumbnail(url=img_url)
-        
+        url = EmbedBuilder.get_image_url(item)
+        if url: embed.set_thumbnail(url=url)
         embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
         return embed
 
-# ═══════════════════════════════════════════════════════════════
-# أزرار التقييم - Feedback Buttons
-# ═══════════════════════════════════════════════════════════════
+    @staticmethod
+    def map_embed(map_name:str, map_data:dict=None) -> discord.Embed:
+        embed = discord.Embed(title=f"🗺️ خريطة: {map_name}", color=COLORS['info'], timestamp=datetime.now())
+        map_id = map_data.get('id') if map_data else map_name.lower().replace(' ','_')
+        map_url = f"{IMAGES_BASE_URL}/maps/{map_id}.png"
+        embed.set_image(url=map_url)
+        if map_data and map_data.get('description'):
+            desc = map_data['description']
+            if isinstance(desc, dict):
+                desc = desc.get('en','')
+            embed.description = desc[:500]
+        embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
+        return embed
 
+    @staticmethod
+    def stats_embed(db_stats:dict, ai_stats:dict, uptime:str) -> discord.Embed:
+        embed = discord.Embed(title="📊 إحصائيات دليل", color=COLORS['info'], timestamp=datetime.now())
+        db_text = (f"📦 العناصر: **{db_stats.get('items',0):,}**\n📚 المجموع: **{db_stats.get('total',0):,}**")
+        embed.add_field(name="🗄️ قاعدة البيانات", value=db_text, inline=True)
+        ai_text = "\n".join([f"{k}: {v}" for k,v in ai_stats.items()])
+        embed.add_field(name="🤖 استخدام AI", value=ai_text, inline=True)
+        embed.add_field(name="⏱️ وقت التشغيل", value=uptime, inline=False)
+        embed.set_footer(text=f"🤖 {BOT_NAME} v{BOT_VERSION}")
+        return embed
+
+# -------------------------
+# Feedback view (buttons)
+# -------------------------
 class FeedbackView(discord.ui.View):
-    def __init__(self, author_id: int, source_question: str, embed_title: str):
+    def __init__(self, author_id:int, source_question:str, embed_title:str):
         super().__init__(timeout=600)
         self.author_id = author_id
         self.source_question = source_question
         self.embed_title = embed_title or ""
-    
+
     async def _send_log(self, interaction: discord.Interaction, status: str):
         try:
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
-                await log_channel.send(
-                    f"📝 تقييم: {status}\n"
-                    f"👤 المرسل: <@{interaction.user.id}>\n"
-                    f"📦 العنوان: {self.embed_title}\n"
-                    f"🗨️ السؤال: {self.source_question}"
-                )
+                await log_channel.send(f"📝 تقييم: {status}\n👤 المرسل: <@{interaction.user.id}>\n📦 العنوان: {self.embed_title}\n🗨️ السؤال: {self.source_question}")
         except Exception:
             pass
-    
+
     @discord.ui.button(label="إجابة صحيحة", style=discord.ButtonStyle.success, emoji="✅")
     async def feedback_ok(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("تم تسجيل: إجابة صحيحة ✅", ephemeral=True)
         await self._send_log(interaction, "صحيحة")
-    
+
     @discord.ui.button(label="إجابة خاطئة", style=discord.ButtonStyle.danger, emoji="❌")
     async def feedback_bad(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("تم تسجيل: إجابة خاطئة ❌ — أبلغنا الفريق.", ephemeral=True)
@@ -1256,1280 +622,388 @@ class FeedbackView(discord.ui.View):
 async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
     view = FeedbackView(message.author.id, message.content, getattr(embed, "title", "") or "")
     return await message.reply(embed=embed, view=view)
-    
-    @staticmethod
-    def map_embed(map_name: str, map_data: dict = None) -> discord.Embed:
-        """إنشاء Embed للخريطة مع الصورة"""
-        embed = discord.Embed(
-            title=f"🗺️ خريطة: {map_name}",
-            color=COLORS["info"],
-            timestamp=datetime.now()
-        )
-        
-        # صورة الخريطة الكبيرة
-        map_id = map_data.get('id') if map_data else map_name.lower().replace(' ', '_')
-        map_url = f"{IMAGES_BASE_URL}/maps/{map_id}.png"
-        embed.set_image(url=map_url)
-        
-        if map_data:
-            if map_data.get('description'):
-                desc = map_data['description']
-                if isinstance(desc, dict):
-                    desc = desc.get('en', '')
-                embed.description = desc[:500]
-        
-        embed.set_footer(text=f"🤖 {BOT_NAME} | ARC Raiders")
-        return embed
-    
-    @staticmethod
-    def stats_embed(db_stats: dict, ai_stats: dict, uptime: str) -> discord.Embed:
-        """إنشاء Embed للإحصائيات"""
-        embed = discord.Embed(
-            title="📊 إحصائيات دليل",
-            color=COLORS["info"],
-            timestamp=datetime.now()
-        )
-        
-        # إحصائيات قاعدة البيانات
-        db_text = f"""
-📦 العناصر: **{db_stats['items']:,}**
-📜 المهمات: **{db_stats['quests']:,}**
-🏠 الملاجئ: **{db_stats['hideout']:,}**
-🤖 البوتات: **{db_stats['bots']:,}**
-🗺️ الخرائط: **{db_stats['maps']:,}**
-💰 التجارة: **{db_stats['trades']:,}**
-⚡ المهارات: **{db_stats['skills']:,}**
-🔧 المشاريع: **{db_stats['projects']:,}**
-━━━━━━━━━━━━━━━
-📚 المجموع: **{db_stats['total']:,}**
-"""
-        embed.add_field(name="🗄️ قاعدة البيانات", value=db_text, inline=True)
-        
-        # إحصائيات AI
-        ai_text = f"""
-🧠 DeepSeek: **{ai_stats.get('deepseek', 0)}**
-⚡ Groq: **{ai_stats.get('groq', 0)}**
-🤖 OpenAI: **{ai_stats.get('openai', 0)}**
-🎭 Claude: **{ai_stats.get('anthropic', 0)}**
-🌐 Google: **{ai_stats.get('google', 0)}**
-"""
-        embed.add_field(name="🤖 استخدام AI", value=ai_text, inline=True)
-        
-        embed.add_field(name="⏱️ وقت التشغيل", value=uptime, inline=False)
-        embed.set_footer(text=f"🤖 {BOT_NAME} v{BOT_VERSION}")
-        
-        return embed
 
-# ═══════════════════════════════════════════════════════════════
-# البوت الرئيسي
-# ═══════════════════════════════════════════════════════════════
-
+# -------------------------
+# Bot class
+# -------------------------
 class DaleelBot(commands.Bot):
-    """البوت الرئيسي"""
-    
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.guilds = True
         intents.members = True
-        
-        super().__init__(
-            command_prefix='!',
-            intents=intents,
-            help_command=None
-        )
-        
-        # المكونات
+        super().__init__(command_prefix='!', intents=intents, help_command=None)
         self.database = DatabaseManager()
-        self.search_engine = None
+        self.search_engine: Optional[SearchEngine] = None
         self.ai_manager = AIManager()
         self.context_manager = ContextManager()
         self.anti_spam = AntiSpam()
-        
-        # الإحصائيات
-        self.start_time = None
+        self.start_time: Optional[datetime] = None
         self.questions_answered = 0
-        
+
     async def setup_hook(self):
-        """إعداد البوت"""
-        # تحميل قاعدة البيانات
-        self.database.load_all()
+        loaded = self.database.load_all()
         self.search_engine = SearchEngine(self.database)
-        
-        # مزامنة الأوامر
+        # sync only for the allowed guild to speed up
         try:
-            synced = await self.tree.sync()
-            logger.info(f"✅ تم مزامنة {len(synced)} أمر")
+            await self.tree.sync(guild=discord.Object(id=ALLOWED_GUILD_ID))
+            logger.info("✅ Tree synced")
         except Exception as e:
-            logger.error(f"خطأ في المزامنة: {e}")
-    
+            logger.warning(f"Sync warning: {e}")
+
     async def on_ready(self):
-        """عند جاهزية البوت"""
         self.start_time = datetime.now()
-        
-        logger.info(f"""
-╔══════════════════════════════════════════════════════════════╗
-║                    ✅ البوت شغال!                             ║
-╠══════════════════════════════════════════════════════════════╣
-║  الاسم: {self.user.name}
-║  الـ ID: {self.user.id}
-║  السيرفرات: {len(self.guilds)}
-║  البيانات: {self.database.get_stats()['total']} عنصر
-╚══════════════════════════════════════════════════════════════╝
-        """)
-        
-        # إرسال رسالة للقناة
+        logger.info(f"✅ Bot ready: {self.user} ({self.user.id}) — data: {len(self.database.all_data)} items")
         await self.send_startup_message()
-        
-        # تحديث الحالة
-        await self.change_presence(
-            activity=discord.Activity(
-                type=discord.ActivityType.watching,
-                name="أسئلتكم عن ARC Raiders"
-            )
-        )
-    
-    async def send_startup_message(self):
-        """إرسال رسالة بدء التشغيل"""
         try:
-            channel = self.get_channel(LOG_CHANNEL_ID)
-            if channel:
-                embed = discord.Embed(
-                    title="🚀 البوت شغال!",
-                    description=f"""
-✅ **دليل** جاهز للخدمة!
+            await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="أسئلتكم عن ARC Raiders"))
+        except Exception:
+            pass
 
-📊 **الإحصائيات:**
-• العناصر: {self.database.get_stats()['total']:,}
-• الحالة: متصل ✅
-
-⏰ **وقت التشغيل:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-                    """,
-                    color=COLORS["success"],
-                    timestamp=datetime.now()
-                )
-                await channel.send(embed=embed)
+    async def send_startup_message(self):
+        try:
+            ch = self.get_channel(LOG_CHANNEL_ID)
+            if ch:
+                embed = discord.Embed(title="🚀 البوت شغال!", description=f"✅ **{BOT_NAME}** جاهز\n📊 العناصر: {len(self.database.all_data):,}", color=COLORS['success'], timestamp=datetime.now())
+                await ch.send(embed=embed)
         except Exception as e:
-            logger.error(f"خطأ في إرسال رسالة البدء: {e}")
-    
+            logger.warning(f"Startup message failed: {e}")
+
     def get_uptime(self) -> str:
-        """حساب وقت التشغيل"""
         if not self.start_time:
             return "غير معروف"
-        
         delta = datetime.now() - self.start_time
-        hours, remainder = divmod(int(delta.total_seconds()), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        
-        return f"{hours} ساعة, {minutes} دقيقة, {seconds} ثانية"
+        h, rem = divmod(int(delta.total_seconds()), 3600)
+        m, s = divmod(rem, 60)
+        return f"{h} ساعة, {m} دقيقة, {s} ثانية"
 
-# إنشاء البوت
+# instantiate bot
 bot = DaleelBot()
 
-# ═══════════════════════════════════════════════════════════════
-# الأوامر - Commands
-# ═══════════════════════════════════════════════════════════════
+# -------------------------
+# Views for details/disambiguation
+# -------------------------
+class DetailsView(discord.ui.View):
+    def __init__(self, embed: discord.Embed, timeout:int=120):
+        super().__init__(timeout=timeout)
+        self.embed = embed
+    @discord.ui.button(label="عرض التفاصيل", style=discord.ButtonStyle.primary)
+    async def show(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(embed=self.embed)
 
+class DisambButton(discord.ui.Button):
+    def __init__(self, label:str, payload):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary)
+        self.payload = payload
+    async def callback(self, interaction: discord.Interaction):
+        source, item, score = self.payload
+        short = build_short_answer(source, item)
+        embed = EmbedBuilder.item_embed(item, None)
+        view = DetailsView(embed)
+        await interaction.response.send_message(content=short, embed=None, view=view)
+
+class DisambiguationView(discord.ui.View):
+    def __init__(self, options:List[Tuple[str, dict, float]], timeout:int=60):
+        super().__init__(timeout=timeout)
+        for source, item, score in options[:5]:
+            label = bot.search_engine.extract_name(item)
+            self.add_item(DisambButton(label=label, payload=(source,item,score)))
+
+# -------------------------
+# Short answer builder (used in many places)
+# -------------------------
+def build_short_answer(source:str, item:dict) -> str:
+    name = bot.search_engine.extract_name(item) if bot.search_engine else (item.get('id') or 'معلومة')
+    found = item.get('foundIn') or item.get('maps') or item.get('location')
+    price = item.get('value') or item.get('price') or item.get('cost')
+    parts = [f"**{name}**"]
+    if found:
+        if isinstance(found, (list,tuple)): parts.append(f"تحصل عليه في: {', '.join(str(x) for x in found[:3])}")
+        else: parts.append(f"تحصل عليه في: {found}")
+    if price:
+        parts.append(f"السعر: {price}")
+    # keep concise
+    return " · ".join(parts)
+
+# -------------------------
+# Interaction / Message helpers
+# -------------------------
+async def _respond(ctx_or_inter, **kwargs):
+    if isinstance(ctx_or_inter, commands.Context):
+        return await ctx_or_inter.send(**kwargs)
+    elif isinstance(ctx_or_inter, discord.Interaction):
+        try:
+            if ctx_or_inter.response.is_done():
+                return await ctx_or_inter.followup.send(**kwargs)
+            else:
+                return await ctx_or_inter.response.send_message(**kwargs)
+        except Exception:
+            return await ctx_or_inter.followup.send(**kwargs)
+    else:
+        raise TypeError("Unsupported context")
+
+# -------------------------
+# Commands: help / stats / search
+# -------------------------
 @bot.tree.command(name="help", description="عرض المساعدة")
 async def help_command(interaction: discord.Interaction):
-    """أمر المساعدة"""
     if interaction.channel and interaction.channel.id != ALLOWED_CHANNEL_ID:
         await interaction.response.send_message("استخدم قناة الأسئلة المخصصة فقط.", ephemeral=True)
         return
-    embed = discord.Embed(
-        title="📖 مساعدة دليل",
-        description="أنا **دليل** - مساعدك الذكي لعالم ARC Raiders!",
-        color=COLORS["info"]
-    )
-    
-    embed.add_field(
-        name="💬 كيف تسألني؟",
-        value="اكتب سؤالك مباشرة في القناة وراح أجاوبك!",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="📝 أمثلة أسئلة:",
-        value="""
-• `وين أحصل Rusted Gear؟`
-• `كيف أهزم الـ Queen؟`
-• `وش أفضل سلاح للمبتدئين؟`
-• `spawn rate للـ Ferro Handgun`
-        """,
-        inline=False
-    )
-    
-    embed.add_field(
-        name="⚡ الأوامر:",
-        value="""
-• `/help` - عرض المساعدة
-• `/stats` - إحصائيات البوت
-• `/search [كلمة]` - بحث في قاعدة البيانات
-        """,
-        inline=False
-    )
-    
+    embed = discord.Embed(title="📖 مساعدة دليل", description="أنا **دليل** — اسألني عن ARC Raiders", color=COLORS['info'])
+    embed.add_field(name="أمثلة", value="• `وين أحصل Rusted Gear؟`\n• `كيف أهزم Queen؟`", inline=False)
     embed.set_footer(text=f"🤖 {BOT_NAME} v{BOT_VERSION}")
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="stats", description="عرض إحصائيات البوت")
 async def stats_command(interaction: discord.Interaction):
-    """أمر الإحصائيات"""
     if interaction.channel and interaction.channel.id != ALLOWED_CHANNEL_ID:
         await interaction.response.send_message("استخدم قناة الأسئلة المخصصة فقط.", ephemeral=True)
         return
-    embed = EmbedBuilder.stats_embed(
-        bot.database.get_stats(),
-        bot.ai_manager.usage_stats,
-        bot.get_uptime()
-    )
+    embed = EmbedBuilder.stats_embed(bot.database.get_stats(), bot.ai_manager.usage_stats, bot.get_uptime())
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="search", description="بحث في قاعدة البيانات")
 @app_commands.describe(query="كلمة البحث")
 async def search_command(interaction: discord.Interaction, query: str):
-    """أمر البحث"""
     if interaction.channel and interaction.channel.id != ALLOWED_CHANNEL_ID:
         await interaction.response.send_message("استخدم قناة الأسئلة المخصصة فقط.", ephemeral=True)
         return
     await interaction.response.defer()
-    
     results = bot.search_engine.search(query, limit=5)
-    
     if not results:
-        embed = EmbedBuilder.warning(
-            "لا نتائج",
-            f"ما لقيت نتائج لـ **{query}**\n\nجرب كلمات مختلفة!"
-        )
+        embed = discord.Embed(title="لا نتائج", description=f"ما لقيت نتائج لـ **{query}**", color=COLORS['warning'])
         await interaction.followup.send(embed=embed)
         return
-    
-    embed = discord.Embed(
-        title=f"🔍 نتائج البحث: {query}",
-        color=COLORS["info"],
-        timestamp=datetime.now()
-    )
-    
-    for i, result in enumerate(results, 1):
-        item = result['item']
+    embed = discord.Embed(title=f"🔍 نتائج البحث: {query}", color=COLORS['info'])
+    for i,r in enumerate(results,1):
+        item = r['item']
         name = bot.search_engine.extract_name(item)
-        score = int(result['score'] * 100)
-        
-        # استخراج الفئة
-        category = item.get('category') or item.get('type')
-        if isinstance(category, dict):
-            category = category.get('en') or list(category.values())[0]
-        category = category or 'غير محدد'
-        
-        embed.add_field(
-            name=f"{i}. {name}",
-            value=f"📁 {category} | 🎯 تطابق: {score}%",
-            inline=False
-        )
-    
-    embed.set_footer(text=f"🤖 {BOT_NAME}")
+        score = int(r['score']*100)
+        cat = EmbedBuilder.extract_field(item,'category') or EmbedBuilder.extract_field(item,'type') or 'غير محدد'
+        embed.add_field(name=f"{i}. {name}", value=f"📁 {cat} | 🎯 تطابق: {score}%", inline=False)
     await interaction.followup.send(embed=embed)
 
-# ═══════════════════════════════════════════════════════════════
-# معالجة الرسائل
-# ═══════════════════════════════════════════════════════════════
+# prefix text command for backwards compatibility
+@commands.command(name="سأل")
+async def ask_prefix(ctx: commands.Context, *, query: str):
+    await handle_message_query(ctx, query)
 
+bot.add_command(ask_prefix)
+
+# -------------------------
+# Core message handling (refactored)
+# -------------------------
+async def handle_message_query(ctx_or_inter, raw_query: str, message_obj: discord.Message = None):
+    """
+    Common handler for queries (from message or interaction).
+    Returns after sending short answer + view (details button).
+    """
+    # for usage detection
+    is_interaction = isinstance(ctx_or_inter, discord.Interaction)
+    # sanitize
+    query = raw_query.strip()
+    if not query:
+        await _respond(ctx_or_inter, content="اكتب السؤال أو اسم العنصر.")
+        return
+
+    # anti-spam for messages (Context only)
+    if isinstance(ctx_or_inter, commands.Context):
+        allowed, wait = bot.anti_spam.check(ctx_or_inter.author.id)
+        if not allowed:
+            await ctx_or_inter.send(embed=discord.Embed(title="⚠️ انتظر قل��لاً", description=f"⏰ انتظر {wait} ثانية", color=COLORS['warning']), delete_after=10)
+            return
+
+    # inject context if present (only for messages)
+    if isinstance(ctx_or_inter, commands.Context):
+        query = bot.context_manager.inject_context(ctx_or_inter.author.id, query)
+
+    # detect question type for threshold tuning
+    ql = query.lower()
+    is_crafting = any(k in ql for k in ['تصنيع','مكونات','recipe','craft'])
+    is_location = any(k in ql for k in ['وين','اين','أين','مكان','where','location','احصل'])
+    is_obtain = any(k in ql for k in ['كيف احصل','كيف اجيب','drop','drops','يطيح','يسقط','get'])
+
+    match_threshold = 0.70
+    if is_crafting or is_location or is_obtain:
+        match_threshold = 0.35
+
+    # attempt local search first
+    results = bot.search_engine.search(query, limit=5 if (is_crafting or is_obtain or is_location) else 1)
+
+    # if best result passes threshold, send short + details-button embed
+    if results and results[0]['score'] >= match_threshold:
+        result = results[0]
+        item = result['item']
+        short = build_short_answer(result.get('item_source','local') if 'item_source' in result else 'local', item)
+        embed = EmbedBuilder.item_embed(item, None)
+        # include extra custom details for obtain questions
+        if is_obtain or is_location:
+            obtain_info = []
+            found_in = item.get('foundIn')
+            if found_in: obtain_info.append(f"📍 المنطقة: {found_in}")
+            loc = item.get('location') or item.get('map')
+            if loc:
+                if isinstance(loc, dict): loc = loc.get('en') or loc.get('ar') or next(iter(loc.values()))
+                obtain_info.append(f"🗺️ الموقع: {loc}")
+            spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
+            if spawn_rate: obtain_info.append(f"📊 نسبة الظهور: {spawn_rate}%")
+            price = item.get('price') or item.get('value')
+            if price: obtain_info.append(f"💰 السعر: {price}")
+            if obtain_info:
+                embed.add_field(name="ملاحظات الحصول", value="\n".join(obtain_info), inline=False)
+
+        # reply: short answer + button to show embed (or send embed directly in ephemeral for interactions)
+        view = DetailsView(embed)
+        # use feedback view with reply (for messages)
+        if isinstance(ctx_or_inter, commands.Context):
+            reply = await reply_with_feedback(ctx_or_inter.message, embed)
+            # also send short answer as follow-up message for clarity
+            await ctx_or_inter.send(content=short, view=view)
+        else:
+            # interaction
+            await ctx_or_inter.response.send_message(content=short, embed=None, view=view)
+        # set context for follow-ups
+        name = bot.search_engine.extract_name(item)
+        if isinstance(ctx_or_inter, commands.Context):
+            user_id = ctx_or_inter.author.id
+        else:
+            user_id = ctx_or_inter.user.id
+        bot.context_manager.set_context(user_id, name, item)
+        bot.questions_answered += 1
+        return
+
+    # if no strong match, but moderate matches exist, offer disambiguation buttons
+    top = bot.search_engine.search(query, limit=5)
+    top_filtered = [ (r['item'].get('id') if 'id' in r['item'] else 'local', r['item'], r['score']) for r in top if r['score']>=0.40 ]
+    if top_filtered:
+        view = DisambiguationView(top_filtered)
+        msg = "ما لقيت تطابق قوي، بس هذي اقتراحات ممكن تقصد واحد منها — اضغط على الخيار:"
+        await _respond(ctx_or_inter, content=msg, view=view)
+        return
+
+    # fallback to AI if configured and allowed
+    ai_enabled = any([DEEPSEEK_API_KEY,GROQ_API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY,GOOGLE_API_KEY])
+    # decide if AI should answer based on intent keywords (simple)
+    use_ai = any(tok in ql for tok in ['أفضل','أقوى','استراتيجية','لماذا','ليش','كيف','explain','vs','مقارنة','بديل','alternative'])
+    if use_ai and ai_enabled:
+        # craft safe context
+        user_ctx = None
+        if isinstance(ctx_or_inter, commands.Context):
+            user_ctx = bot.context_manager.get_context(ctx_or_inter.author.id)
+        else:
+            user_ctx = bot.context_manager.get_context(ctx_or_inter.user.id)
+        context = f"المستخدم كان يسأل عن: {user_ctx['item']}" if user_ctx else ""
+        thinking = None
+        if isinstance(ctx_or_inter, commands.Context):
+            thinking = await ctx_or_inter.send("🔍 أبحث لك...")
+        else:
+            await ctx_or_inter.response.defer()
+        ai_res = await bot.ai_manager.ask_ai(query, context)
+        if thinking:
+            try: await thinking.delete()
+            except: pass
+        if ai_res['success']:
+            embed = discord.Embed(title="🤖 إجابة مختصرة", description=ai_res['answer'][:700], color=COLORS['info'], timestamp=datetime.now())
+            embed.set_footer(text=f"via {ai_res['provider']} • {BOT_NAME}")
+            if isinstance(ctx_or_inter, commands.Context):
+                await reply_with_feedback(ctx_or_inter.message, embed)
+            else:
+                await ctx_or_inter.followup.send(embed=embed)
+            return
+        # else fallthrough to not found
+    # final: not found in data or AI
+    await _respond(ctx_or_inter, content="ما لقيت شيء واضح في الداتا. جرّب تكتب اسم العنصر بالكامل أو تغير صياغة السؤال.")
+
+# Helper wrapper for message event
 @bot.event
 async def on_message(message: discord.Message):
-    """معالجة الرسائل"""
     try:
         if message.author.bot:
             return
-        
+        # guild filter
         if message.guild and message.guild.id != ALLOWED_GUILD_ID:
             return
-        
+        # channel filter: if not allowed channel, still process commands
         if message.channel.id != ALLOWED_CHANNEL_ID:
             await bot.process_commands(message)
             return
-        
         content = message.content.strip()
-        content_lower = content.lower()
-        
-        ignore_words = [
-            'دليل', 'daleel', 'bot', 'بوت',
-            'هاي', 'hi', 'hello', 'مرحبا', 'السلام',
-            'هلا', 'اهلا', 'hey', 'yo'
-        ]
-        
-        if len(content) < 5 or content_lower in ignore_words:
+        if not content or len(content) < 3:
             return
-        
-        for word in ['دليل', 'daleel']:
-            if content_lower.startswith(word):
-                content = content[len(word):].strip()
-                break
-        
-        if len(content) < 3:
+        # ignore greetings
+        if content.lower() in ['hi','hello','مرحبا','السلام','هاي','هلا']:
             return
-        
-        quick_responses = {
-            'شكراً': 'العفو! 💚',
-            'شكرا': 'العفو! 💚',
-            'thanks': "You're welcome! 💚",
-            'thank you': "You're welcome! 💚",
-            'ممتاز': 'سعيد إني ساعدتك! 😊',
-            'رائع': 'دائماً في الخدمة! 🎮',
-            'تمام': 'أي خدمة! 👍',
-            'حلو': 'شكراً! 😊',
-            'good': 'Thanks! 😊'
-        }
-        
-        if content_lower in quick_responses:
-            await message.reply(quick_responses[content_lower])
+        # quick replies
+        quick = {'شكراً':'العفو! 💚','thanks':"You're welcome!"}
+        if content in quick:
+            await message.reply(quick[content])
             return
-        
-        allowed, wait_time = bot.anti_spam.check(message.author.id)
-        if not allowed:
-            embed = EmbedBuilder.warning(
-                "انتظر قليلاً",
-                f"⏰ انتظر **{wait_time}** ثانية"
-            )
-            await message.reply(embed=embed, delete_after=10)
-            return
-        
-        requires_prefix = False
-        if requires_prefix:
-            is_reply_to_bot = False
-            if message.reference:
-                ref_msg = getattr(message.reference, 'resolved', None)
-                if not ref_msg and getattr(message.reference, 'message_id', None):
-                    try:
-                        ref_msg = await message.channel.fetch_message(message.reference.message_id)
-                    except Exception:
-                        ref_msg = None
-                if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
-                    is_reply_to_bot = True
-            if not (content_lower.startswith('دليل') or content_lower.startswith('daleel') or (bot.user in message.mentions) or is_reply_to_bot):
-                await bot.process_commands(message)
-                return
-        
-        user_ctx = bot.context_manager.get_context(message.author.id)
-        if not user_ctx and message.reference:
-            ref_msg = getattr(message.reference, 'resolved', None)
-            if not ref_msg and getattr(message.reference, 'message_id', None):
-                try:
-                    ref_msg = await message.channel.fetch_message(message.reference.message_id)
-                except Exception:
-                    ref_msg = None
-            if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
-                ref_embeds = getattr(ref_msg, 'embeds', []) or []
-                ref_title = ref_embeds[0].title if ref_embeds else None
-                if ref_title:
-                    t = ref_title.strip()
-                    if t.startswith("🧭 منطقة اللوت: "):
-                        zone_display = t.split(": ", 1)[1].strip()
-                        bot.context_manager.set_context(message.author.id, zone_display, None)
-                    elif t.startswith("🗺️ خريطة: "):
-                        map_name = t.split(": ", 1)[1].strip()
-                        bot.context_manager.set_context(message.author.id, map_name, None)
-                    elif t.startswith("📦 "):
-                        item_name = t[2:].strip()
-                        bot.context_manager.set_context(message.author.id, item_name, None)
-                    elif t.startswith("⚖️ مقارنة: "):
-                        comp_part = t.split(": ", 1)[1].strip()
-                        left_name = comp_part.split(" vs ", 1)[0].strip() if " vs " in comp_part else comp_part
-                        if left_name:
-                            bot.context_manager.set_context(message.author.id, left_name, None)
-                    else:
-                        guess_results = bot.search_engine.search(t, limit=1)
-                        if guess_results:
-                            gitem = guess_results[0]['item']
-                            gname = bot.search_engine.extract_name(gitem)
-                            bot.context_manager.set_context(message.author.id, gname, gitem)
-                        else:
-                            bot.context_manager.set_context(message.author.id, t, None)
-        
-        original_content = content
-        question = bot.context_manager.inject_context(message.author.id, content)
-        if question != original_content and message.reference:
-            ref_msg = getattr(message.reference, 'resolved', None)
-            if not ref_msg and getattr(message.reference, 'message_id', None):
-                try:
-                    ref_msg = await message.channel.fetch_message(message.reference.message_id)
-                except Exception:
-                    ref_msg = None
-            if ref_msg and ref_msg.author and bot.user and ref_msg.author.id == bot.user.id:
-                try:
-                    await message.add_reaction('👀')
-                except Exception:
-                    pass
-        if question.startswith('دليل '):
-            question = question[5:]
+        # process user message
+        # remove prefix "دليل" if present
+        if content.lower().startswith('دليل'):
+            content = content[5:].strip()
+            if not content: return
+        # pass to handler
+        await handle_message_query(message, content, message_obj=message)
     except Exception as e:
-        logger.error(f"خطأ في on_message: {e}", exc_info=True)
+        logger.exception("خطأ في on_message: %s", e)
         try:
-            embed = EmbedBuilder.error(
-                "خطأ غير متوقع",
-                "صار خطأ داخل البوت.\nلو تكرر، بلغ الإدارة مع صورة من الرسالة."
-            )
-            await message.reply(embed=embed)
+            await message.reply(embed=EmbedBuilder.error("خطأ غير متوقع","حصل خطأ داخل البوت."))
         except Exception:
             pass
-        return
-    
-    crafting_keywords = [
-        'ادوات', 'أدوات',
-        'تصنع', 'تصنيع',
-        'تسوي', 'أسوي', 'اسوي',
-        'أصنع', 'اصنع', 'أصنعه', 'اصنعه', 'أصنعها', 'اصنعها',
-        'recipe', 'craft',
-        'مكونات', 'مخطط',
-        'متطلبات', 'متطلباته', 'متطلباتها'
-    ]
-    is_crafting_question = any(keyword in content_lower for keyword in crafting_keywords)
-    
-    location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
-    is_location_question = any(keyword in content_lower for keyword in location_keywords)
-    
-    obtain_keywords = [
-        'كيف احصل', 'كيف أجيب', 'كيف اجيب',
-        'من وين', 'من وين اجيب', 'من وين احصل',
-        'وين القا', 'وين القى', 'وين القاء',
-        'الفلارات', 'فلارات',
-        'drop', 'drops', 'loot',
-        'يطيح', 'يطيحه', 'يندر', 'يطلع'
-    ]
-    is_obtain_question = any(keyword in content_lower for keyword in obtain_keywords)
-    
-    is_queen_query = any(
-        term in content_lower for term in ['queen', 'كوين', 'الكوين']
-    )
-    
-    if is_queen_query:
-        queen_candidates = [
-            b for b in bot.database.bots
-            if isinstance(b, dict)
-            and 'name' in b
-            and isinstance(b['name'], str)
-            and 'queen' in b['name'].lower()
-        ]
-        if queen_candidates:
-            item = queen_candidates[0]
-            description = None
-            if 'description' in item:
-                desc_val = item['description']
-                if isinstance(desc_val, dict):
-                    description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-                else:
-                    description = str(desc_val)
-            translated_desc = None
-            if description and description != 'لا يوجد وصف':
-                translated_desc = await bot.ai_manager.translate_to_arabic(description)
-            if is_obtain_question or is_location_question:
-                obtain_info = []
-                found_in = item.get('foundIn')
-                if found_in:
-                    obtain_info.append(f"📍 المنطقة: {found_in}")
-                location_field = item.get('location') or item.get('spawn_location') or item.get('map')
-                if location_field and location_field != found_in:
-                    if isinstance(location_field, dict):
-                        location_field = location_field.get('en') or location_field.get('ar') or list(location_field.values())[0]
-                    obtain_info.append(f"🗺️ الموقع: {location_field}")
-                spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
-                if spawn_rate:
-                    obtain_info.append(f"📊 نسبة الظهور: {spawn_rate}%")
-                craft_bench = item.get('craftBench')
-                recipe = item.get('recipe') if isinstance(item.get('recipe'), dict) else None
-                if craft_bench or recipe:
-                    if craft_bench:
-                        obtain_info.append(f"🔨 التصنيع: {craft_bench}")
-                    else:
-                        obtain_info.append("🔨 التصنيع: متاح (شوف تفاصيل الوصفة)")
-                drops_list = item.get('drops')
-                if isinstance(drops_list, list) and len(drops_list) > 0:
-                    obtain_info.append(f"💀 يسقط من: {len(drops_list)} عدو/بوس")
-                traders = item.get('traders') or item.get('soldBy')
-                if traders:
-                    obtain_info.append("💰 التجار: متوفر للشراء")
-                price = item.get('price') or item.get('value')
-                if price:
-                    obtain_info.append(f"💵 السعر: {price}")
-                if not obtain_info:
-                    obtain_info.append("⚠️ معلومات المكان غير متوفرة في الداتا")
-                    if translated_desc and translated_desc != 'لا يوجد وصف':
-                        obtain_info.append(f"📝 {translated_desc[:150]}")
-                custom_desc = "\n".join(obtain_info)
-                embed = EmbedBuilder.item_embed(item, custom_desc)
-            else:
-                embed = EmbedBuilder.item_embed(item, translated_desc)
-            drops = item.get('drops') or []
-            if drops and isinstance(drops, list):
-                drop_lines = []
-                for drop_id in drops:
-                    drop_item = next(
-                        (it for it in bot.database.items if isinstance(it, dict) and it.get('id') == drop_id),
-                        None
-                    )
-                    if drop_item:
-                        drop_name = bot.search_engine.extract_name(drop_item)
-                        drop_lines.append(f"- {drop_name}")
-                    else:
-                        drop_lines.append(f"- {drop_id}")
-                if drop_lines:
-                    embed.add_field(
-                        name="القطع التي تسقط منها",
-                        value="\n".join(drop_lines),
-                        inline=False
-                    )
-            reply = await reply_with_feedback(message, embed)
-            if use_ai and (is_crafting_question or is_obtain_question or is_location_question):
-                ai_context_parts = []
-                name_for_ai = bot.search_engine.extract_name(item)
-                ai_context_parts.append(f"الآيتم: {name_for_ai}")
-                ai_context_parts.append("تنبيه للنظام: المستخدم رأى بالفعل بطاقة المعلومات الكاملة (الدروب، الموقع، الوصف) من قاعدة البيانات.")
-                ai_context_parts.append("مهم جداً: لا تكرر قائمة العناصر أو الدروب أو المعلومات الموجودة في البطاقة أبداً.")
-                ai_context_parts.append("لا ترسل إيموجيات قوائم أو تكرر المحتوى.")
-                ai_context_parts.append("المطلوب: قدم فقط نصيحة استراتيجية ذكية ومختصرة (سطرين كحد أقصى) عن كيفية القتال أو الاستخدام الأمثل.")
-                
-                if is_obtain_question:
-                    ai_context_parts.append("السؤال عن استراتيجية الحصول.")
-                if is_crafting_question:
-                    ai_context_parts.append("السؤال عن نصائح التصنيع.")
-                if is_location_question:
-                    ai_context_parts.append("السؤال عن كيفية الوصول للموقع.")
 
-                ai_context = " | ".join(ai_context_parts)
-                await ask_ai_and_reply(
-                    message,
-                    f"{ai_context}\n\nسؤال اللاعب: {question}"
-                )
-            name = bot.search_engine.extract_name(item)
-            bot.context_manager.set_context(message.author.id, name, item)
-            # الأزرار تغني عن ردود ✅❌
-            bot.questions_answered += 1
-            return
-    
-    if is_comparative_question(content):
-        names = re.findall(r'[A-Za-z][A-Za-z ]+', content)
-        unique = []
-        for n in names:
-            nn = n.strip()
-            if nn and nn.lower() not in [x.lower() for x in unique]:
-                unique.append(nn)
-        if len(unique) >= 2:
-            left_name, right_name = unique[0], unique[1]
-            left_results = bot.search_engine.search(left_name, limit=1)
-            right_results = bot.search_engine.search(right_name, limit=1)
-            if left_results and right_results:
-                left_item = left_results[0]['item']
-                right_item = right_results[0]['item']
-                def summarize(it):
-                    n = bot.search_engine.extract_name(it)
-                    cat = EmbedBuilder.extract_field(it, 'category') or ''
-                    typ = EmbedBuilder.extract_field(it, 'type') or ''
-                    rar = EmbedBuilder.extract_field(it, 'rarity') or ''
-                    price = it.get('price') or it.get('value') or ''
-                    found = it.get('foundIn') or ''
-                    bench = it.get('craftBench') or ''
-                    recipe = it.get('recipe') if isinstance(it.get('recipe'), dict) else None
-                    rcount = len(recipe) if recipe else 0
-                    parts = []
-                    if cat: parts.append(f"الفئة: {cat}")
-                    if typ: parts.append(f"النوع: {typ}")
-                    if rar: parts.append(f"الندرة: {rar}")
-                    if price: parts.append(f"السعر: {price}")
-                    if found: parts.append(f"يوجد في: {found}")
-                    if bench: parts.append(f"يتصنع في: {bench}")
-                    if rcount: parts.append(f"تعقيد التصنيع: {rcount} جزء")
-                    return n, "\n".join(parts) if parts else "لا توجد بيانات كافية"
-                ln, ltext = summarize(left_item)
-                rn, rtext = summarize(right_item)
-                embed = discord.Embed(
-                    title=f"⚖️ مقارنة: {ln} vs {rn}",
-                    color=COLORS["info"],
-                    timestamp=datetime.now()
-                )
-                embed.add_field(name=ln, value=ltext, inline=True)
-                embed.add_field(name=rn, value=rtext, inline=True)
-                def rarity_score(r):
-                    m = {'common':1,'uncommon':2,'rare':3,'epic':4,'legendary':5}
-                    rv = str(r).lower()
-                    return m.get(rv, 0)
-                ls = rarity_score(EmbedBuilder.extract_field(left_item, 'rarity') or '')
-                rs = rarity_score(EmbedBuilder.extract_field(right_item, 'rarity') or '')
-                lp = left_item.get('price') or left_item.get('value') or 0
-                rp = right_item.get('price') or right_item.get('value') or 0
-                lrc = len(left_item.get('recipe')) if isinstance(left_item.get('recipe'), dict) else 0
-                rrc = len(right_item.get('recipe')) if isinstance(right_item.get('recipe'), dict) else 0
-                choice = ln
-                reason = "ندرة أعلى" if ls>rs else ("سعر أعلى عادة أقوى" if lp>rp else ("تصنيع أبسط" if lrc<rrc else "تقارب، اختر حسب أسلوبك"))
-                if rs>ls or (lp>rp and rs>=ls) or (rrc<lrc and rs>=ls):
-                    choice = rn
-                    reason = "ندرة أعلى" if rs>ls else ("سعر أعلى عادة أقوى" if rp>lp else ("تصنيع أبسط" if rrc<lrc else "تقارب، اختر حسب أسلوبك"))
-                embed.add_field(name="الرأي المختصر", value=f"أنصح بـ {choice} ({reason}).", inline=False)
-                reply = await reply_with_feedback(message, embed)
-                bot.context_manager.set_context(message.author.id, choice, left_item if choice==ln else right_item)
-                bot.questions_answered += 1
-                return
+# Slash command handler calls same logic
+@bot.tree.command(name="سأل", description="اسأل عن عنصر أو عن طريقة الحصول عليه")
+@app_commands.describe(query="اكتب اسم العنصر أو السؤال")
+async def ask_slash(interaction: discord.Interaction, query: str):
+    await handle_message_query(interaction, query)
 
-    # تصحيح أخطاء إملائية شائعة
-    typo_corrections = {
-        'have': 'heavy',
-        'heve': 'heavy',
-        'hevy': 'heavy',
-        'ligh': 'light',
-        'lit': 'light',
-        'complx': 'complex',
-        'cmplex': 'complex'
-    }
-    
-    english_words = re.findall(r'[a-zA-Z_]+', content)
-    english_words_lower = [typo_corrections.get(w.lower(), w.lower()) for w in english_words]
-    search_query = question
-    main_word = None
-    if (is_crafting_question or is_location_question or is_obtain_question) and english_words_lower:
-        id_like = next((w for w in english_words_lower if '_' in w), None)
-        if id_like:
-            main_word = id_like
-            search_query = main_word
-        else:
-            query_words = {'spawn', 'rate', 'drop', 'drops', 'location', 'where', 'find', 'how', 'much', 'spawnrate'}
-            item_words = [w for w in english_words_lower if w not in query_words]
-            if item_words:
-                main_word = max(item_words, key=len)
-                search_query = main_word
-            else:
-                main_word = " ".join(english_words_lower)
-                search_query = main_word
+# Admin commands
+@commands.is_owner()
+@commands.command(name="reload_data")
+async def reload_data(ctx: commands.Context):
+    bot.database = DatabaseManager()
+    loaded = bot.database.load_all()
+    bot.search_engine = SearchEngine(bot.database)
+    await ctx.send("✅ تم إعادة تحميل البيانات.")
 
-    zone_query = False
-    zone_name_lower = None
-    if english_words_lower:
-        if not hasattr(bot, "zone_names"):
-            zones = set()
-            for it in bot.database.items:
-                if isinstance(it, dict):
-                    fi = it.get('foundIn')
-                    if isinstance(fi, str):
-                        for part in fi.split(','):
-                            part = part.strip()
-                            if part:
-                                zones.add(part)
-            bot.zone_names = zones
-        zone_names_lower = {z.lower() for z in bot.zone_names}
-        for w in english_words_lower:
-            lw = w.lower()
-            if lw in zone_names_lower:
-                zone_name_lower = lw
-                break
-        if zone_name_lower:
-            other_words = [w.lower() for w in english_words_lower if w.lower() != zone_name_lower]
-            filler_words = {'zone', 'area', 'type', 'region'}
-            if not other_words or all(w in filler_words for w in other_words):
-                zone_query = True
+@commands.check(lambda ctx: ctx.author.id == OWNER_ID)
+@commands.command(name="اعد_تحميل_البيانات")
+async def reload_data_ar(ctx: commands.Context):
+    bot.database = DatabaseManager()
+    bot.database.load_all()
+    bot.search_engine = SearchEngine(bot.database)
+    await ctx.send("✅ تم إعادة تحميل البيانات بنجاح")
 
-    if zone_query and not is_crafting_question and not is_obtain_question:
-        matched_items = []
-        for it in bot.database.items:
-            if not isinstance(it, dict):
-                continue
-            fi = it.get('foundIn')
-            if not isinstance(fi, str):
-                continue
-            parts = [p.strip().lower() for p in fi.split(',') if p.strip()]
-            if zone_name_lower in parts:
-                matched_items.append(it)
-        if matched_items:
-            matched_items_sorted = sorted(
-                matched_items,
-                key=lambda it: bot.search_engine.extract_name(it)
-            )
-            limited_items = matched_items_sorted[:10]
-            zone_display = next(
-                (z for z in getattr(bot, "zone_names", []) if z.lower() == zone_name_lower),
-                zone_name_lower.capitalize()
-            )
-            embed = discord.Embed(
-                title=f"🧭 منطقة اللوت: {zone_display}",
-                description=f"أمثلة على القطع التي تلقاها في منطقة {zone_display}:",
-                color=COLORS["info"],
-                timestamp=datetime.now()
-            )
-            lines = []
-            for it in limited_items:
-                name = bot.search_engine.extract_name(it)
-                rarity = EmbedBuilder.extract_field(it, 'rarity') or ''
-                text = name
-                if rarity:
-                    text = f"{name} ({rarity})"
-                lines.append(f"- {text}")
-            extra_count = len(matched_items_sorted) - len(limited_items)
-            if extra_count > 0:
-                lines.append(f"+ {extra_count} قطع أخرى في هذه المنطقة")
-            embed.add_field(
-                name="اللوت في المنطقة",
-                value="\n".join(lines),
-                inline=False
-            )
-        else:
-            zone_display = zone_name_lower.capitalize() if zone_name_lower else question
-            embed = EmbedBuilder.warning(
-                "منطقة غير معروفة",
-                f"ما لقيت منطقة لوت باسم {zone_display} في الداتا."
-            )
-        reply = await reply_with_feedback(message, embed)
-        bot.context_manager.set_context(message.author.id, zone_display, None)
-        bot.questions_answered += 1
-        return
-    
-    gun_parts_modifier = None
-    if is_obtain_question and 'gun' in english_words_lower and 'parts' in english_words_lower:
-        for w in english_words_lower:
-            if w in ['light', 'heavy', 'complex']:
-                gun_parts_modifier = w
-                break
-        if gun_parts_modifier:
-            search_query = f"{gun_parts_modifier} gun parts"
-
-    gun_parts_family_query = (
-        is_obtain_question
-        and 'gun' in english_words_lower
-        and 'parts' in english_words_lower
-        and gun_parts_modifier is None
-    )
-    if gun_parts_family_query:
-        search_query = "gun parts"
-    
-    ai_configured = is_ai_configured()
-    use_ai = should_use_ai(question) and ai_configured
-    
-    results = bot.search_engine.search(search_query, limit=5 if (is_crafting_question or is_obtain_question or is_location_question) else 1)
-    
-    if is_crafting_question and results and not gun_parts_family_query:
-        recipe_candidates = []
-        for r in results:
-            item_candidate = r['item']
-            recipe_candidate = item_candidate.get('recipe') if isinstance(item_candidate, dict) else None
-            if isinstance(recipe_candidate, dict) and recipe_candidate:
-                recipe_candidates.append(r)
-        if recipe_candidates:
-            best = max(recipe_candidates, key=lambda x: x['score'])
-            results = [best]
-        else:
-            results = [results[0]]
-    
-    # تفضيل العنصر الأساسي على البلوبربنت في أسئلة الطرق/المكان
-    if (is_obtain_question or is_location_question) and results:
-        non_blueprints = [
-            r for r in results
-            if 'blueprint' not in bot.search_engine.extract_name(r['item']).lower()
-            and 'Blueprint' not in r['item'].get('type', '')
-        ]
-        if non_blueprints:
-            results = non_blueprints
-    
-    # عتبة المطابقة: أقل في أسئلة الدروب/المكان/التصنيع
-    match_threshold = 0.6
-    if is_crafting_question or is_obtain_question or is_location_question:
-        match_threshold = 0.3
-    
-    if results and results[0]['score'] > match_threshold:
-        result = results[0]
-        item = result['item']
-        
-        item_name = bot.search_engine.extract_name(item).lower()
-        
-        skip_result = False
-        if (not is_crafting_question and not is_obtain_question and not is_location_question) and english_words:
-            main_word = max(english_words, key=len).lower()
-            if len(main_word) > 3 and main_word not in item_name:
-                skip_result = True
-        
-        if not skip_result:
-            description = None
-            if 'description' in item:
-                desc_val = item['description']
-                if isinstance(desc_val, dict):
-                    description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-                else:
-                    description = str(desc_val)
-            
-            translated_desc = None
-            if description and description != 'لا يوجد وصف':
-                translated_desc = await bot.ai_manager.translate_to_arabic(description)
-
-            if is_obtain_question or is_location_question:
-                obtain_info = []
-                found_in = item.get('foundIn')
-                if found_in:
-                    obtain_info.append(f"📍 **المنطقة:** {found_in}")
-                location_field = item.get('location') or item.get('spawn_location') or item.get('map')
-                if location_field and location_field != found_in:
-                    if isinstance(location_field, dict):
-                        location_field = location_field.get('en') or location_field.get('ar') or list(location_field.values())[0]
-                    obtain_info.append(f"🗺️ **الموقع:** {location_field}")
-                spawn_rate = item.get('spawnRate') or item.get('spawn_rate')
-                if spawn_rate:
-                    obtain_info.append(f"📊 **نسبة الظهور:** {spawn_rate}%")
-                craft_bench = item.get('craftBench')
-                recipe = item.get('recipe')
-                if craft_bench or (isinstance(recipe, dict) and recipe):
-                    if craft_bench:
-                        obtain_info.append(f"🔨 **التصنيع:** متاح في {craft_bench}")
-                    else:
-                        obtain_info.append("🔨 **التصنيع:** متاح (شوف تفاصيل الوصفة)")
-                drops_list = item.get('drops')
-                if isinstance(drops_list, list) and len(drops_list) > 0:
-                    obtain_info.append(f"💀 **يسقط من:** {len(drops_list)} عدو/بوس")
-                traders = item.get('traders') or item.get('soldBy')
-                if traders:
-                    obtain_info.append("💰 **التجار:** متوفر للشراء")
-                price = item.get('price') or item.get('value')
-                if price:
-                    obtain_info.append(f"💵 **السعر:** {price}")
-
-                has_detailed_source = any([
-                    location_field and location_field != found_in,
-                    spawn_rate,
-                    craft_bench,
-                    isinstance(recipe, dict) and bool(recipe),
-                    isinstance(drops_list, list) and len(drops_list) > 0,
-                    traders,
-                ])
-
-                if found_in and not has_detailed_source:
-                    obtain_info = [
-                        "⚙️ **ملاحظة عن السبون:** هذه القطعة ما لها مكان سبون واحد ثابت.",
-                        f"📍 **المنطقة العامة:** {found_in}",
-                        "🔎 حسب بيانات اللعبة: تعتبر لوت عام في هذه المنطقة، يعني تحصل عليها من اللوت والصناديق والأعداء العشوائيين هناك، مو من مصدر واحد محدد."
-                    ]
-                elif not obtain_info:
-                    obtain_info.append("⚠️ **معلومات المكان غير متوفرة في الداتا**")
-                    if translated_desc and translated_desc != 'لا يوجد وصف':
-                        obtain_info.append(f"\n📝 {translated_desc[:150]}")
-                custom_desc = "\n\n".join(obtain_info)
-                embed = EmbedBuilder.item_embed(item, custom_desc)
-            else:
-                embed = EmbedBuilder.item_embed(item, translated_desc)
-
-            if is_crafting_question:
-                recipe = item.get('recipe')
-                if isinstance(recipe, dict) and recipe:
-                    lines = []
-                    for key, amount in recipe.items():
-                        if amount is None:
-                            continue
-                        name = str(key).replace('_', ' ')
-                        lines.append(f"- {name}: {amount}")
-                    if lines:
-                        embed.add_field(name="مكونات التصنيع", value="\n".join(lines), inline=False)
-            
-            reply = await reply_with_feedback(message, embed)
-            if is_obtain_question and gun_parts_family_query:
-                extra_results = []
-                for r in results[1:]:
-                    extra_item = r['item']
-                    extra_name = bot.search_engine.extract_name(extra_item).lower()
-                    if 'gun parts' in extra_name:
-                        extra_results.append(extra_item)
-                for extra_item in extra_results:
-                    extra_description = None
-                    if 'description' in extra_item:
-                        desc_val = extra_item['description']
-                        if isinstance(desc_val, dict):
-                            extra_description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
-                        else:
-                            extra_description = str(desc_val)
-                    extra_translated_desc = None
-                    if extra_description and extra_description != 'لا يوجد وصف':
-                        extra_translated_desc = await bot.ai_manager.translate_to_arabic(extra_description)
-                    extra_embed = EmbedBuilder.item_embed(extra_item, extra_translated_desc)
-                    extra_obtain_lines = []
-                    found_in_extra = extra_item.get('foundIn')
-                    if found_in_extra:
-                        extra_obtain_lines.append(f"- يوجد في: {found_in_extra}")
-                    craft_bench_extra = extra_item.get('craftBench')
-                    if craft_bench_extra:
-                        extra_obtain_lines.append(f"- يتصنع في: {craft_bench_extra}")
-                    if not is_crafting_question:
-                        recipe_extra = extra_item.get('recipe')
-                        if isinstance(recipe_extra, dict) and recipe_extra:
-                            extra_obtain_lines.append("- له وصفة تصنيع، شوف تفاصيل التصنيع")
-                    if extra_obtain_lines:
-                        extra_embed.add_field(
-                            name="طرق الحصول",
-                            value="\n".join(extra_obtain_lines),
-                            inline=False
-                        )
-                    await message.channel.send(embed=extra_embed)
-            
-            if is_location_question:
-                location = item.get('location') or item.get('spawn_location') or item.get('map')
-                if location:
-                    if isinstance(location, dict):
-                        location = location.get('en') or list(location.values())[0]
-                    
-                    map_embed = EmbedBuilder.map_embed(str(location), item)
-                    await message.channel.send(embed=map_embed)
-            
-            if use_ai:
-                ai_context_parts = []
-                # إضافة العنصر الأساسي
-                name_for_ai = bot.search_engine.extract_name(item)
-                ai_context_parts.append(f"الآيتم الأساسي: {name_for_ai}")
-                
-                # لو كان بحث عائلة أسلحة، نضيف الباقين للسياق
-                if is_obtain_question and gun_parts_family_query:
-                     ai_context_parts.append("تنبيه: تم عرض عائلة Gun Parts كاملة (Light, Heavy, Complex).")
-
-                ai_context_parts.append("تنبيه للنظام: المستخدم رأى بطاقة المعلومات الرسمية (الندرة، السعر، الوصف، الموقع، الكرافت).")
-                ai_context_parts.append("مهم: لا تكرر هذه المعلومات أبداً. لا تضع قوائم.")
-                ai_context_parts.append("المطلوب: قدم نصيحة استراتيجية ذكية ومختصرة (سطرين) فقط إذا كان هناك فائدة إضافية غير موجودة في الداتا.")
-                
-                ai_context = " | ".join(ai_context_parts)
-                await ask_ai_and_reply(
-                    message,
-                    f"{ai_context}\n\nسؤال اللاعب: {question}"
-                )
-
-            name = bot.search_engine.extract_name(item)
-            bot.context_manager.set_context(message.author.id, name, item)
-            
-            # الأزرار تغني عن ردود ✅❌
-            
-            bot.questions_answered += 1
-            return
-    
-    if (is_obtain_question or is_location_question or is_crafting_question) and (not results or results[0]['score'] <= match_threshold):
-        if ai_configured:
-            safe_context = (
-                "سؤال عن مكان أو طريقة الحصول أو التصنيع في ARC Raiders "
-                "لكن الداتا الرسمية ما أعطت نتيجة واضحة. "
-                "لا تعطي مواقع أو نسب سبون أو أسماء أعداء من عندك. "
-                "لو ما عندك مصدر مؤكد، قل بصراحة إن المعلومات غير متوفرة، "
-                "واكتفِ بنصائح عامة جداً أو اقتراح أن اللاعب يجرب يسأل المجتمع."
-            )
-            await ask_ai_and_reply(
-                message,
-                f"{safe_context}\n\nسؤال اللاعب: {question}"
-            )
-            return
-        embed = EmbedBuilder.warning(
-            "ما لقيت في الداتا",
-            "ما قدرت ألقى شيء واضح في داتا ARC Raiders يطابق سؤالك.\nجرّب تغير صياغة السؤال أو تكتب اسم الآيتم مباشرة."
-        )
-        await message.reply(embed=embed)
-        return
-    
-    if results and results[0]['score'] > 0.3 and not (is_obtain_question or is_location_question or is_crafting_question):
-        suggestions = bot.search_engine.find_similar(question, limit=3)
-        if suggestions:
-            suggestion_text = "\n".join([f"• {s}" for s in suggestions])
-            embed = EmbedBuilder.warning(
-                "هل تقصد..؟",
-                f"ما لقيت **{content}** بالضبط\n\nهل تقصد:\n{suggestion_text}"
-            )
-            reply = await reply_with_feedback(message, embed)
-            return
-        if use_ai:
-            await ask_ai_and_reply(message, question)
-            return
-        embed = EmbedBuilder.warning(
-            "ما لقيت جواب واضح",
-            "ما قدرت ألقى إجابة دقيقة من داتا ARC Raiders.\nجرّب تكتب اسم الآيتم مباشرة أو صياغة أبسط."
-        )
-        await message.reply(embed=embed)
-        return
-    
-    if use_ai:
-        await ask_ai_and_reply(message, question)
-        return
-    
-    embed = EmbedBuilder.warning(
-        "ما لقيت في الداتا",
-        "ما قدرت ألقى شيء واضح في داتا ARC Raiders يطابق سؤالك.\nجرّب تغير صياغة السؤال أو تكتب اسم الآيتم مباشرة."
-    )
-    await message.reply(embed=embed)
-
-
-async def ask_ai_and_reply(message: discord.Message, question: str):
-    thinking_msg = await message.reply("🔍 أبحث لك...")
-    
-    context = ""
-    user_context = bot.context_manager.get_context(message.author.id)
-    if user_context:
-        context = f"المستخدم كان يسأل عن: {user_context['item']}"
-    
-    q_lower = question.lower()
-    
-    expedition_keywords = [
-        'expedition project',
-        'expedition',
-        'البروجيكت',
-        'البروجكت',
-        'بروجيكت الاكسبديشن',
-        'بروجكت الاكسبديشن',
-        'بروجيكت الإكسبيديشن',
-        'بروجكت الإكسبيديشن'
-    ]
-    if any(k in q_lower for k in expedition_keywords):
-        expedition_context = (
-            "معلومة رسمية عن Expedition Project في ARC Raiders: "
-            "ينفتح عند ليفل 20 كنظام يعيد تقدم الرايدر بشكل اختياري. "
-            "كل دورة تستمر ثمانية أسابيع؛ سبعة أسابيع للتحضير والأسبوع الثامن لإنهاء البروجيكت. "
-            "يعيد الليفل والمهارات والـ XP والإنفنتوري وتقدم التصنيع، "
-            "ويحافظ على الكوزمِتكس والمشتريات وRaider Tokens وCred وتقدم Raider Decks والكودكس والخرائط "
-            "وبونسات الإكسبيديشن من الرنات السابقة. "
-            "إنهاء البروجيكت يعطي جوائز تجميلية دائمة وبفات حساب للمواسم التالية."
-        )
-        if context:
-            context = context + " | " + expedition_context
-        else:
-            context = expedition_context
-    
-    game_info_keywords = [
-        'arc raiders',
-        'arc raider',
-        'اركرين',
-        'آرك ريدرز',
-        'عن اللعبة',
-        'وش هي arc raiders',
-        'ما هي arc raiders'
-    ]
-    if any(k in q_lower for k in game_info_keywords):
-        game_info_context = (
-            "ARC Raiders هي لعبة مغامرات استخراج جماعية تدور على أرض مستقبلية مدمرة، "
-            "تواجه فيها البشرية قوة ميكانيكية غامضة اسمها ARC. "
-            "تلعب كرائدر يطلع لسطح الأرض لجمع الموارد وإنهاء المهمات والرجوع سالماً بالغنائم، "
-            "مع إمكانية التعاون أو التنافس مع ريدرز آخرين."
-        )
-        if context:
-            context = context + " | " + game_info_context
-        else:
-            context = game_info_context
-    
-    arc_force_keywords = [
-        'arc نفسها',
-        'قوة arc',
-        'آرك نفسها',
-        'الآرك',
-        'arc machines'
-    ]
-    if any(k in q_lower for k in arc_force_keywords):
-        arc_force_context = (
-            "ARC هي قوة ميكانيكية غامضة دمّرت العالم، "
-            "تتضمن آليّات صغيرة مثل Ticks وSnitches وصولاً إلى زعماء كبار من نوع Queens."
-        )
-        if context:
-            context = context + " | " + arc_force_context
-        else:
-            context = arc_force_context
-    
-    speranza_keywords = [
-        'speranza',
-        'سبيرانزا',
-        'سبرنزا',
-        'المدينة تحت الأرض',
-        'الملجأ'
-    ]
-    if any(k in q_lower for k in speranza_keywords):
-        speranza_context = (
-            "Speranza هي مستوطنة تحت الأرض تعتبر مركز آمن للبشر بعيداً عن تهديد ARC على السطح، "
-            "وفيها ترجع بعد المهمات لتستلم المكافآت وتتعامل مع التجار وتطوّر شخصيتك ومساحتك الخاصة."
-        )
-        if context:
-            context = context + " | " + speranza_context
-        else:
-            context = speranza_context
-    
-    workshop_keywords = [
-        'workshop',
-        'الوركشوب',
-        'الورشة',
-        'ورشة التصنيع',
-        'تطوير الاسلحة',
-        'ترقية الاسلحة'
-    ]
-    if any(k in q_lower for k in workshop_keywords):
-        workshop_context = (
-            "الـ Workshop هو المكان اللي تطور فيه العتاد والأسلحة، "
-            "وتصلحها وتفتح وصفات تصنيع جديدة. "
-            "تقدر بعد تطور الورشة نفسها عشان تفتح تجهيزات وأدوات أقوى."
-        )
-        if context:
-            context = context + " | " + workshop_context
-        else:
-            context = workshop_context
-    
-    traders_keywords = [
-        'traders',
-        'trader',
-        'التجار',
-        'تاجر',
-        'التاجر'
-    ]
-    if any(k in q_lower for k in traders_keywords):
-        traders_context = (
-            "التُجّار في Speranza شخصيات مهمة يقدمون مهمات تحكي قصص من الـ Rust Belt، "
-            "ويعطونك مكافآت على مساعدتهم، بالإضافة لبيع وشراء الأغراض منك."
-        )
-        if context:
-            context = context + " | " + traders_context
-        else:
-            context = traders_context
-    
-    scrappy_keywords = [
-        'scrappy',
-        'الديك',
-        'ديكي',
-        'rooster',
-        'الديك المساعد'
-    ]
-    if any(k in q_lower for k in scrappy_keywords):
-        scrappy_context = (
-            "Scrappy هو رفيقك الديك اللي يساعدك يجمع الأغراض، "
-            "وله سلوك أنه يلقط اللوت لك حتى لو خسرت، "
-            "وتقدر تدربه وتعطيه كوزمِتكس خاصة فيه."
-        )
-        if context:
-            context = context + " | " + scrappy_context
-        else:
-            context = scrappy_context
-    
-    rust_belt_keywords = [
-        'rust belt',
-        'دام باتلجراوندز',
-        'dam battlegrounds',
-        'buried city',
-        'spaceport',
-        'blue gate',
-        'stella montis'
-    ]
-    if any(k in q_lower for k in rust_belt_keywords):
-        rust_belt_context = (
-            "مناطق الاستكشاف اسمها Rust Belt، "
-            "وتشمل Dam Battlegrounds (غابات ومستَنقعات ومرافق أبحاث)، "
-            "وBuried City (مدينة منهارة مغطاة بالرمل)، "
-            "وSpaceport (منشأة إطلاق قديمة)، "
-            "وBlue Gate (جبال وأنفاق ومدن ومجمعات تحت الأرض). "
-            "وفيه إشاعة عن منطقة اسمها Stella Montis لكن الوصول لها غير معروف."
-        )
-        if context:
-            context = context + " | " + rust_belt_context
-        else:
-            context = rust_belt_context
-    
-    specs_keywords = [
-        'متطلبات التشغيل',
-        'متطلبات اللعبة',
-        'المواصفات المطلوبة',
-        'specs',
-        'requirements',
-        'minimum specs',
-        'recommended specs'
-    ]
-    if any(k in q_lower for k in specs_keywords):
-        specs_context = (
-            "متطلبات ARC Raiders على البي سي: "
-            "الحد الأدنى تقريباً Windows 10 64-bit مع معالج i5-6600K أو Ryzen 5 1600، "
-            "و12GB رام وكرت مثل GTX 1050 Ti أو RX 580، وDirectX 12. "
-            "الموصى به i5-9600K أو Ryzen 5 3600، و16GB رام، "
-            "وكرت مثل RTX 2070 أو RX 5700 XT."
-        )
-        if context:
-            context = context + " | " + specs_context
-        else:
-            context = specs_context
-    
-    ping_keywords = [
-        'ping system',
-        'البنق',
-        'البينق',
-        'ping',
-        'نظام البينق',
-        'نظام العلامات',
-        'كيف أعلِّم على الأعداء',
-        'مارك'
-    ]
-    if any(k in q_lower for k in ping_keywords):
-        ping_context = (
-            "نظام الـ Ping يسمح لك تعلم على اللاعبين أو ARC أو الأغراض أو المواقع، "
-            "باستخدام زر الماوس الأوسط على البي سي، أو R1/RT على البلايستيشن والإكس بوكس، "
-            "وتقدر تعدّل الأزرار من الإعدادات."
-        )
-        if context:
-            context = context + " | " + ping_context
-        else:
-            context = ping_context
-    
-    ai_result = await bot.ai_manager.ask_ai(question, context)
-    
-    await thinking_msg.delete()
-    
-    if ai_result['success']:
-        embed = EmbedBuilder.success(
-            "جواب من AI",
-            ai_result['answer']
-        )
-        embed.set_footer(text=f"via {ai_result['provider']} • 🤖 {BOT_NAME}")
-    else:
-        embed = EmbedBuilder.error(
-            "عذراً",
-            "ما قدرت ألقى جواب.\n\n💡 جرب صياغة السؤال بطريقة مختلفة!"
-        )
-    
-    reply = await reply_with_feedback(message, embed)
-
+# Reaction handling for manual feedback logs
 @bot.event
 async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
-    """معالجة الـ Reactions - تسجيل التقييمات"""
-    
-    if user.bot:
-        return
-    
-    if reaction.message.author != bot.user:
-        return
-    
+    if user.bot: return
+    if reaction.message.author != bot.user: return
     emoji = str(reaction.emoji)
-    
-    # تسجيل في اللوق
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    
-    if emoji == '❌' and log_channel:
-        # إجابة خاطئة - نسجل في اللوق
-        embed = discord.Embed(
-            title="❌ تقييم: إجابة خاطئة",
-            color=COLORS["error"],
-            timestamp=datetime.now()
-        )
-        
-        # محتوى الرسالة الأصلية
-        original_content = ""
-        if reaction.message.embeds:
-            original_embed = reaction.message.embeds[0]
-            original_content = f"**{original_embed.title}**\n{original_embed.description[:200] if original_embed.description else ''}"
-        
-        embed.add_field(name="👤 من", value=user.mention, inline=True)
-        embed.add_field(name="📝 الرد", value=original_content[:500] or "Embed", inline=False)
-        
-        # السؤال الأصلي (الرسالة اللي رد عليها البوت)
-        if reaction.message.reference:
-            try:
-                original_msg = await reaction.message.channel.fetch_message(reaction.message.reference.message_id)
-                embed.add_field(name="❓ السؤال", value=original_msg.content[:200], inline=False)
-            except:
-                pass
-        
-        await log_channel.send(embed=embed)
-    
-    elif emoji == '✅':
-        # إجابة صحيحة - ممكن نسجلها للإحصائيات
-        pass
+    if emoji in ['❌','✅'] and log_channel:
+        try:
+            embed = discord.Embed(title=f"تقييم: {'خاطئ' if emoji=='❌' else 'صحيح'}", color=COLORS['error'] if emoji=='❌' else COLORS['success'], timestamp=datetime.now())
+            original = reaction.message.embeds[0] if reaction.message.embeds else None
+            if original:
+                embed.add_field(name="الرد", value=(original.title or '') + "\n" + (original.description[:300] if original.description else ''), inline=False)
+            await log_channel.send(embed=embed)
+        except Exception:
+            pass
 
-# ═══════════════════════════════════════════════════════════════
-# التشغيل
-# ═══════════════════════════════════════════════════════════════
+# -------------------------
+# Run
+# -------------------------
+def main():
+    if not DISCORD_TOKEN:
+        logger.error("❌ DISCORD_TOKEN غير موجود. ضع التوكن في ملف .env أو متغير بيئة.")
+        return
+    try:
+        bot.run(DISCORD_TOKEN)
+    except Exception as e:
+        logger.exception("فشل تشغيل البوت: %s", e)
 
 if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        logger.error("❌ DISCORD_TOKEN غير موجود!")
-        exit(1)
-    
-    logger.info("🚀 جاري تشغيل البوت...")
-    bot.run(DISCORD_TOKEN)
+    main()
