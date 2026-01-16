@@ -1,12 +1,9 @@
-# بوت "دليل" - Daleel Bot (single-file, مُعدّل)
+# بوت "دليل" - Daleel Bot (single-file, مُحدّث: إجابات AI مختصرة تلقائياً)
 # ---------------------------------------------------------
-# ملاحظة: انسخ هذا الملف كاملًا واستبدل به bot.py في مشروعك.
-# هذا الملف يجمع:
-# - تحميل البيانات من مجلد arcraiders-data/
-# - محرك بحث ذكي يدعم العربي/إنجليزي وتحسين المطابقة
-# - رد مختصر أولاً + زر "عرض التفاصيل" لعرض Embed مفصّل
-# - تكاملات AI كخيار احتياطي (إذا مفعلت مفاتيح API)
-# - تحكم بالسياق، منع سبام، أزرار تقييم، وإحصائيات
+# انسخ هذا الملف كاملًا واستبدل به bot.py في مشروعك.
+# التغييرات الرئيسية:
+# - أي إجابة من AI تُقصَّر تلقائيًا إلى 1-2 جملة (دون فلسفة).
+# - بقية وظائف البوت الأصلية موجودة (بحث محلي، أزرار، ردود، إلخ).
 # ---------------------------------------------------------
 
 import os
@@ -51,7 +48,7 @@ ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
 BOT_NAME = "دليل"
-BOT_VERSION = "2.0.1"
+BOT_VERSION = "2.0.2"
 
 # -------------------------
 # Logging
@@ -110,6 +107,19 @@ def similarity_score(a: str, b: str) -> float:
         except Exception:
             pass
     return SequenceMatcher(None, a, b).ratio()
+
+# -------------------------
+# New: truncate AI answers to 1-2 sentences
+# -------------------------
+def truncate_answer_to_sentences(text: str, max_sentences: int = 2) -> str:
+    """قطع النص إلى أول N جمل (يعمل مع العربية والإنجليزية)."""
+    if not text:
+        return text
+    # split by sentence enders (., ?, !, Arabic question mark)
+    parts = re.split(r'(?<=[\.\?\!؟])\s+', text.strip())
+    if len(parts) <= max_sentences:
+        return " ".join(parts).strip()
+    return " ".join(parts[:max_sentences]).strip()
 
 # -------------------------
 # Database Manager
@@ -344,7 +354,8 @@ class AIManager:
         if not self.check_daily():
             return {'success':False,'answer':'تم الوصول للحد اليومي للـ AI.','provider':None}
         # system prompt: concise Arabic
-        system_prompt = f"""أنت "دليل" - بوت مختصر باللغة العربية لمجتمع ARC Raiders. أجب بجملة أو جملتين واضحين، ثم اختِمُّ بـ "لمزيد: اضغط عرض التفاصيل". لا تكتب فلسفة أو شروحات طويلة. {('سياق: '+context) if context else ''}"""
+        system_prompt = f"""أنت "دليل" - بوت مختصر باللغة العربية لمجتمع ARC Raiders. 
+إعطاء إجابة قصيرة ومباشرة: لا تزيد عن 1-2 جملة. إذا لم تكن متأكداً، اكتب 'غير مؤكدة'. {('السياق: '+context) if context else ''}"""
         # try providers in order
         providers = [
             ('deepseek', self._ask_deepseek),
@@ -359,7 +370,9 @@ class AIManager:
                 if res:
                     self.daily_usage += 1
                     self.usage_stats[name] = self.usage_stats.get(name,0)+1
-                    return {'success':True,'answer':res,'provider':name}
+                    # truncate provider raw result to 1-2 sentences before returning
+                    short = truncate_answer_to_sentences(res, max_sentences=2)
+                    return {'success':True,'answer':short,'provider':name}
             except Exception as e:
                 logger.warning(f"AI provider {name} failed: {e}")
                 continue
@@ -412,7 +425,11 @@ class AIManager:
                     data = await resp.json()
                     # adapt to Claude response format
                     if isinstance(data, dict):
-                        return data.get('content', [{'type':'output_text','text':''}])[0].get('text','').strip()
+                        # some Claude responses format differ; attempt common paths
+                        if 'completion' in data and isinstance(data['completion'], str):
+                            return data['completion'].strip()
+                        if 'content' in data and isinstance(data['content'], list):
+                            return data['content'][0].get('text','').strip()
         return None
 
     async def _ask_google(self, question, system_prompt):
@@ -811,7 +828,7 @@ async def handle_message_query(ctx_or_inter, raw_query: str, message_obj: discor
     if isinstance(ctx_or_inter, commands.Context):
         allowed, wait = bot.anti_spam.check(ctx_or_inter.author.id)
         if not allowed:
-            await ctx_or_inter.send(embed=discord.Embed(title="⚠️ انتظر قل��لاً", description=f"⏰ انتظر {wait} ثانية", color=COLORS['warning']), delete_after=10)
+            await ctx_or_inter.send(embed=discord.Embed(title="⚠️ انتظر قليلاً", description=f"⏰ انتظر {wait} ثانية", color=COLORS['warning']), delete_after=10)
             return
 
     # inject context if present (only for messages)
@@ -904,7 +921,9 @@ async def handle_message_query(ctx_or_inter, raw_query: str, message_obj: discor
             try: await thinking.delete()
             except: pass
         if ai_res['success']:
-            embed = discord.Embed(title="🤖 إجابة مختصرة", description=ai_res['answer'][:700], color=COLORS['info'], timestamp=datetime.now())
+            # ai_res['answer'] already truncated by AIManager; but ensure final safety truncation
+            short_ans = truncate_answer_to_sentences(ai_res['answer'], max_sentences=2)
+            embed = discord.Embed(title="🤖 إجابة مختصرة", description=short_ans[:700], color=COLORS['info'], timestamp=datetime.now())
             embed.set_footer(text=f"via {ai_res['provider']} • {BOT_NAME}")
             if isinstance(ctx_or_inter, commands.Context):
                 await reply_with_feedback(ctx_or_inter.message, embed)
@@ -913,7 +932,7 @@ async def handle_message_query(ctx_or_inter, raw_query: str, message_obj: discor
             return
         # else fallthrough to not found
     # final: not found in data or AI
-    await _respond(ctx_or_inter, content="ما لقيت شيء واضح في الداتا. جرّب تكتب اسم العنصر بالكامل أو تغير صياغة السؤال.")
+    await _respond(ctx_or_inter, content="ما لقيت شيء واضح في الداتا. جرّب تكتب اسم ��لعنصر بالكامل أو تغير صياغة السؤال.")
 
 # Helper wrapper for message event
 @bot.event
