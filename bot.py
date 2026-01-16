@@ -1540,14 +1540,17 @@ class DaleelBot(commands.Bot):
         
         return f"{hours} ساعة, {minutes} دقيقة, {seconds} ثانية"
 
-# تم حذف تحميل db_manager من الأعلى لأنه غير مستخدم فعلياً
-# db_manager = DatabaseManager()
-# db_manager.load_all()
-# DaleelBot هو الكائن الوحيد المسؤول عن تحميل البيانات والتعامل مع كل شيء
+print("بدء تهيئة DaleelBot...")
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.members = True
+bot = DaleelBot(intents=intents)
+print("تم تهيئة DaleelBot.")
 
-# إنشاء البوت
-print("سيتم تشغيل البوت الآن...")
-bot.run(DISCORD_TOKEN)
+if __name__ == "__main__":
+    print("سيتم تشغيل البوت الآن...")
+    bot.run(DISCORD_TOKEN)
 
 # ═══════════════════════════════════════════════════════════════
 # الأوامر - Commands
