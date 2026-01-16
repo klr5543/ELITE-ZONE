@@ -2480,24 +2480,6 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
         else:
             context = ping_context
     
-    location_keywords = ['وين', 'اين', 'أين', 'مكان', 'موقع', 'القى', 'الاقي', 'احصل', 'where', 'location', 'find']
-    obtain_keywords = [
-        'كيف احصل', 'كيف أجيب', 'كيف اجيب',
-        'من وين', 'من وين اجيب', 'من وين احصل',
-        'وين القا', 'وين القى', 'وين القاء',
-        'drop', 'drops', 'loot',
-        'يطيح', 'يطيحه', 'يندر', 'يطلع'
-    ]
-    crafting_keywords = [
-        'متطلبات', 'متطلباته', 'متطلباتها',
-        'recipe', 'recipes', 'craft', 'crafting',
-        'اصنع', 'أصنع', 'تصنيع', 'صنع', 'مواد تصنيع'
-    ]
-    
-    is_location_question = any(k in q_lower for k in location_keywords)
-    is_obtain_question = any(k in q_lower for k in obtain_keywords)
-    is_crafting_question = any(k in q_lower for k in crafting_keywords)
-    
     focus_name = None
     matches = re.findall(r'[A-Za-z][A-Za-z0-9\s\-]+', question)
     if matches:
@@ -2510,34 +2492,7 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
         else:
             context = "معلومات من ويكي ARC Raiders: " + extra_docs
     
-    if is_location_question or is_obtain_question:
-        ai_question = (
-            f"سؤال اللاعب: {question}\n\n"
-            "باستخدام المعلومات الموجودة في السياق (خصوصاً النص القادم من ويكي ARC Raiders عن هذا الآيتم)، "
-            "استخرج أفضل الأماكن لجمع الآيتم ثم لخصها للاعب:\n"
-            "1) اذكر أفضل منطقة أو منطقتين رئيسيتين يمكن فيها الحصول على الآيتم (اسم الخريطة والمنطقة).\n"
-            "2) إن وُجدت، اذكر مثالاً من 1 إلى 3 أماكن إضافية مناسبة للفارم.\n"
-            "3) أضف نصيحة لعب عملية قصيرة عن طريقة البحث أو التجهيزات المفيدة أو درجة الخطورة.\n\n"
-            "اكتب الجواب في 2 إلى 4 جمل عربية بسيطة، بدون قوائم أو تعداد نقطي، وبدون نسخ نص الويكي حرفياً."
-        )
-    elif is_crafting_question:
-        ai_question = (
-            f"سؤال اللاعب: {question}\n\n"
-            "باستخدام المعلومات الموجودة في السياق (خصوصاً نص ويكي ARC Raiders)، "
-            "اشرح متطلبات تصنيع هذا الآيتم أو المشروع للاعب بشكل مبسط:\n"
-            "1) وضّح نوع وعدد الموارد المطلوبة بشكل عام (بدون الدخول في قائمة طويلة).\n"
-            "2) أعطِ نصيحة قصيرة عن من أين يبدأ اللاعب بجمع الموارد أو ما الذي يجهزه.\n\n"
-            "اكتب الجواب في 2 إلى 3 جمل عربية بسيطة، بدون قوائم أو تعداد نقطي، وبدون نسخ نص الويكي حرفياً."
-        )
-    else:
-        ai_question = (
-            f"سؤال اللاعب: {question}\n\n"
-            "اعتمد على السياق المرفق (وخاصة نص ويكي ARC Raiders) لشرح ما يحتاج اللاعب أن يعرفه عن هذا الموضوع "
-            "في 2 إلى 3 جمل عربية بسيطة، كأنك تشرح لصديق جديد على اللعبة، بدون قوائم أو تكرار ممل، "
-            "ودون نسخ نصوص الويكي حرفياً."
-        )
-    
-    ai_result = await bot.ai_manager.ask_ai(ai_question, context)
+    ai_result = await bot.ai_manager.ask_ai(question, context)
     
     await thinking_msg.delete()
     
