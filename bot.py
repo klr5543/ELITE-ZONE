@@ -1840,7 +1840,7 @@ async def on_message(message: discord.Message):
                     description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
                 else:
                     description = str(desc_val)
-                       translated_desc = None
+            translated_desc = None
             if description and description != 'لا يوجد وصف':
                 translated_desc = await bot.ai_manager.translate_to_arabic(description)
             if is_obtain_question or is_location_question:
