@@ -1268,7 +1268,7 @@ def generate_item_response(item, name=None, drops=None, location=None, recipe=No
                 if found_in:
                     text = f"عادةً يُوجد {name} في: {found_in}."
                 else:
-                    text = f"لا يوجد مكان محدد لهذا الغرض في قاعدة البيانات. إذا عندك تجربة أو معلومة شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا سؤال اللاعبين أو البحث في الويكي الرسمي."
+                    text = f"لا يوجد مكان محدد لهذا الغرض في قاعدة البيانات. إذا عندك تفاصيل أو تجربة، شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا البحث في arcraiders.com/wiki أو سؤال اللاعبين في الديسكورد."
 
         # Location / zone intent
         elif intent == 'location' or item.get('location'):
@@ -1276,7 +1276,7 @@ def generate_item_response(item, name=None, drops=None, location=None, recipe=No
             if location:
                 text = f"{name} يُوجد عادة في: {location}."
             else:
-                text = f"لا يوجد مكان محدد لهذا الغرض في قاعدة البيانات. إذا عندك تجربة أو معلومة شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا سؤال اللاعبين أو البحث في الويكي الرسمي."
+                text = f"لا يوجد مكان محدد لهذا الغرض في قاعدة البيانات. إذا عندك تفاصيل أو تجربة، شاركها مع المجتمع ليستفيد الجميع. جرب أيضًا البحث في arcraiders.com/wiki أو سؤال اللاعبين في الديسكورد."
 
         # Definition or fallback
         else:
@@ -1443,11 +1443,12 @@ async def reply_with_feedback(message: discord.Message, embed: discord.Embed):
 class DaleelBot(commands.Bot):
     """البوت الرئيسي"""
     
-    def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        intents.guilds = True
-        intents.members = True
+    def __init__(self, intents: discord.Intents = None):
+        if intents is None:
+            intents = discord.Intents.default()
+            intents.message_content = True
+            intents.guilds = True
+            intents.members = True
         
         super().__init__(
             command_prefix='!',
@@ -1540,7 +1541,12 @@ class DaleelBot(commands.Bot):
         return f"{hours} ساعة, {minutes} دقيقة, {seconds} ثانية"
 
 # إنشاء البوت
-bot = DaleelBot()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.members = True
+
+bot = DaleelBot(intents=intents)
 
 # ═══════════════════════════════════════════════════════════════
 # الأوامر - Commands
@@ -1652,6 +1658,7 @@ async def search_command(interaction: discord.Interaction, query: str):
 
 @bot.event
 async def on_message(message: discord.Message):
+    print("استقبلت رسالة:", message.content)
     """معالجة الرسائل"""
     try:
         if message.author.bot:
@@ -1833,7 +1840,7 @@ async def on_message(message: discord.Message):
                     description = desc_val.get('en') or desc_val.get('ar') or list(desc_val.values())[0]
                 else:
                     description = str(desc_val)
-            translated_desc = None
+                       translated_desc = None
             if description and description != 'لا يوجد وصف':
                 translated_desc = await bot.ai_manager.translate_to_arabic(description)
             if is_obtain_question or is_location_question:
@@ -1931,6 +1938,9 @@ async def on_message(message: discord.Message):
         await message.reply(embed=embed)
         return
     
+    # تعريف النتائج الافتراضية قبل أي شرط يستخدمها
+    results = []
+    match_threshold = 0.5  # عدل القيمة حسب منطقك أو اجعلها متغيرة
     if (is_obtain_question or is_location_question or is_crafting_question) and (not results or results[0]['score'] <= match_threshold):
         if ai_configured:
             safe_context = (
@@ -1981,8 +1991,3 @@ async def on_message(message: discord.Message):
         "ما قدرت ألقى شيء واضح في داتا ARC Raiders يطابق سؤالك.\nجرّب تغير صياغة السؤال أو تكتب اسم الآيتم مباشرة."
     )
     await message.reply(embed=embed)
-
-if __name__ == "__main__":
-    print("تشغيل البوت الآن...")
-    logging.info("تشغيل البوت الآن...")
-    bot.run(DISCORD_TOKEN)
