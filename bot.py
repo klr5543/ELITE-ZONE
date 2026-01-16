@@ -2074,7 +2074,23 @@ async def on_message(message: discord.Message):
                 price = item.get('price') or item.get('value')
                 if price:
                     obtain_info.append(f"💵 **السعر:** {price}")
-                if not obtain_info:
+
+                has_detailed_source = any([
+                    location_field and location_field != found_in,
+                    spawn_rate,
+                    craft_bench,
+                    isinstance(recipe, dict) and bool(recipe),
+                    isinstance(drops_list, list) and len(drops_list) > 0,
+                    traders,
+                ])
+
+                if found_in and not has_detailed_source:
+                    obtain_info = [
+                        "⚙️ **ملاحظة عن السبون:** هذه القطعة ما لها مكان سبون واحد ثابت.",
+                        f"📍 **المنطقة العامة:** {found_in}",
+                        "🔎 حسب بيانات اللعبة: تعتبر لوت عام في هذه المنطقة، يعني تحصل عليها من اللوت والصناديق والأعداء العشوائيين هناك، مو من مصدر واحد محدد."
+                    ]
+                elif not obtain_info:
                     obtain_info.append("⚠️ **معلومات المكان غير متوفرة في الداتا**")
                     if translated_desc and translated_desc != 'لا يوجد وصف':
                         obtain_info.append(f"\n📝 {translated_desc[:150]}")
