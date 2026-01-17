@@ -2279,6 +2279,67 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
         context = f"المستخدم كان يسأل عن: {user_context['item']}"
     
     q_lower = question.lower()
+    focus_item = None
+    focus_item_name = None
+    img_url = None
+    
+    try:
+        search_results = bot.search_engine.search(question, limit=1)
+    except Exception:
+        search_results = None
+    
+    if search_results and search_results[0]['score'] > 0.4:
+        focus_item = search_results[0]['item']
+        focus_item_name = bot.search_engine.extract_name(focus_item)
+        img_url = EmbedBuilder.get_image_url(focus_item)
+        
+        description = None
+        if isinstance(focus_item, dict) and 'description' in focus_item:
+            desc_val = focus_item['description']
+            if isinstance(desc_val, dict):
+                description = desc_val.get('en') or desc_val.get('ar') or next(iter(desc_val.values()), None)
+            else:
+                description = str(desc_val)
+        
+        item_type = EmbedBuilder.extract_field(focus_item, 'type') or ''
+        rarity = EmbedBuilder.extract_field(focus_item, 'rarity') or ''
+        found_in = focus_item.get('foundIn') or ''
+        location_field = focus_item.get('location') or focus_item.get('spawn_location') or focus_item.get('map')
+        if isinstance(location_field, dict):
+            location_field = location_field.get('en') or location_field.get('ar') or next(iter(location_field.values()), None)
+        spawn_rate = focus_item.get('spawnRate') or focus_item.get('spawn_rate') or ''
+        price = focus_item.get('price') or focus_item.get('value') or ''
+        
+        parts = []
+        if focus_item_name:
+            parts.append(f"الاسم من الداتا: {focus_item_name}")
+        if description:
+            parts.append(f"وصف قصير من الداتا: {description}")
+        if item_type:
+            parts.append(f"النوع في الداتا: {item_type}")
+        if rarity:
+            parts.append(f"درجة الندرة في الداتا: {rarity}")
+        if found_in:
+            parts.append(f"تصنيف منطقة اللوت في الداتا: {found_in}")
+        if location_field and location_field != found_in:
+            parts.append(f"موقع تفصيلي إن وجد في الداتا: {location_field}")
+        if spawn_rate:
+            parts.append(f"نسبة ظهور تقريبية من الداتا إن وجدت: {spawn_rate}")
+        if price:
+            parts.append(f"قيمة تقريبية في الداتا: {price}")
+        
+        if parts:
+            db_context = " | ".join(parts)
+            wrapped_db_context = (
+                "ملخص مختصر من داتا ARC Raiders عن العناصر المرتبطة بسؤال اللاعب. "
+                "مهم جداً: لا تخترع أسماء خرائط أو سبون دقيق إذا ما كان موجود لا في الداتا ولا في الويكي. "
+                "لو المعلومة عامة فقط (مثل كلمة Industrial بدون تفاصيل)، وضّح للمستخدم أنها معلومة عامة وليست مكاناً محدداً.\n"
+                f"{db_context}"
+            )
+            if context:
+                context = context + " | " + wrapped_db_context
+            else:
+                context = wrapped_db_context
     
     expedition_keywords = [
         'expedition project',
@@ -2481,9 +2542,12 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             context = ping_context
     
     focus_name = None
-    matches = re.findall(r'[A-Za-z][A-Za-z0-9\s\-]+', question)
-    if matches:
-        focus_name = max(matches, key=len).strip()
+    if focus_item_name:
+        focus_name = focus_item_name
+    else:
+        matches = re.findall(r'[A-Za-z][A-Za-z0-9\s\-]+', question)
+        if matches:
+            focus_name = max(matches, key=len).strip()
     
     extra_docs = await fetch_doc_snippet(focus_name or question)
     if extra_docs:
@@ -2502,6 +2566,8 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             color=COLORS["success"],
             timestamp=datetime.now()
         )
+        if img_url:
+            embed.set_thumbnail(url=img_url)
         embed.set_footer(text=f"🤖 {BOT_NAME}")
     else:
         embed = EmbedBuilder.error(
@@ -2510,6 +2576,9 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
         )
     
     reply = await reply_with_feedback(message, embed)
+    
+    if focus_item_name and focus_item:
+        bot.context_manager.set_context(message.author.id, focus_item_name, focus_item)
 
 @bot.event
 async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
