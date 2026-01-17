@@ -41,7 +41,7 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
 # Bot Settings
 BOT_NAME = "دليل"
-BOT_VERSION = "2.2.1"  # Updated version
+BOT_VERSION = "2.2.2"
 
 # الافتراضي: wiki_first لتقليل الهلوسة في أسئلة (وين/كيف أحصل + التصليح)
 AI_MODE = os.getenv("AI_MODE", "wiki_first").lower()
@@ -168,6 +168,33 @@ async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
                     )
                 if repairing_match:
                     repairing_html = repairing_match.group(1)
+                else:
+                    tables = re.findall(r'<table[^>]*>.*?</table>', html, re.DOTALL | re.IGNORECASE)
+                    for table_html in tables:
+                        header_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL | re.IGNORECASE)
+                        if not header_rows:
+                            continue
+                        first_row = header_rows[0]
+                        header_cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', first_row, re.DOTALL | re.IGNORECASE)
+                        header_texts = []
+                        for cell in header_cells:
+                            cell_text = re.sub(r'<[^>]+>', ' ', cell)
+                            cell_text = re.sub(r'\s+', ' ', cell_text).strip().lower()
+                            if cell_text:
+                                header_texts.append(cell_text)
+                        if not header_texts:
+                            continue
+                        has_item = any('item' in c for c in header_texts)
+                        has_cost = any(
+                            'repair cost' in c
+                            or ('repair' in c and 'cost' in c)
+                            for c in header_texts
+                        )
+                        has_dur = any('durability' in c for c in header_texts)
+                        if has_item and has_cost and has_dur:
+                            repairing_html = table_html
+                            logger.debug(f"Using fallback repair table without explicit Repairing header for '{slug}'")
+                            break
 
                 if repairing_html:
                     # حاول نقرأ أي جدول داخل السكشن
@@ -774,6 +801,11 @@ def build_repair_answer_from_wiki(item_name: str, wiki_data: dict) -> str | None
                 repair_summary = "; ".join(chunks)[:800]
 
     if not repair_summary:
+        if AI_MODE == "wiki_first":
+            s1 = f"الويكي حالياً ما فيه أرقام تصليح مؤكدة لـ {item_name}."
+            s2 = "ما أقدر أحدد تكاليف أو مواد التصليح بدون أرقام واضحة من قسم Repairing في الويكي."
+            s3 = "تعامل معها كنصيحة عامة واسأل اللاعبين أو شوف آخر تحديثات الويكي لو تحتاج تفاصيل دقيقة."
+            return normalize_official_map_names(" ".join([s1, s2, s3]))
         return None
 
     # نخليها بسيطة وقابلة للقراءة
@@ -2362,10 +2394,13 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             repair_hint = f"\n📍 Repairing (ويكي نص): {wiki_data['repair_raw'][:500]}"
 
         style_hint = (
-            "هذا سؤال عن التصليح في الورشة. جاوب بثلاث جمل بالعامية السعودية:\n"
+            "هذا سؤال عن التصليح في الورشة (Repair وليس Crafting). جاوب بثلاث جمل بالعامية السعودية:\n"
             "1) قل إنه التصليح على تيرات (I إلى IV) لو ينطبق.\n"
             "2) اذكر المواد والكميات من قسم Repairing بالويكي (لا تخترع).\n"
-            "3) نصيحة سريعة (جهّز القطع قبل لا تروح للورشة)."
+            "3) نصيحة سريعة (جهّز القطع قبل لا تروح للورشة).\n"
+            "قواعد إضافية:\n"
+            "- ممنوع تذكر مواد أو وصفات تصنيع (مثل Rusted Gear أو Metal) إلا إذا كانت مكتوبة نصاً في قسم Repairing في الويكي.\n"
+            "- إذا ما عندك أرقام من قسم Repairing في الويكي، قل إنك ما لقيت أرقام ولا تذكر أي أرقام أو مواد من عندك."
             f"{repair_hint}"
         )
     elif is_crafting_question:
