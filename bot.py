@@ -41,9 +41,13 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
 # Bot Settings
 BOT_NAME = "دليل"
-BOT_VERSION = "2.1.0"  # Updated version
+BOT_VERSION = "2.2.0"  # Updated version
 
 AI_MODE = os.getenv("AI_MODE", "ai_only").lower()
+
+# Wiki Cache (اختياري) لتقليل الضغط وتسريع الردود
+WIKI_CACHE_TTL_SECONDS = int(os.getenv("WIKI_CACHE_TTL", "600"))  # 10 دقائق افتراضي
+_WIKI_CACHE: dict[str, tuple[float, dict]] = {}
 
 # ═══════════════════════════════════════════════════════════════
 # Logging
@@ -71,11 +75,21 @@ async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
     """
     يجيب معلومات منظمة من ويكي ARC Raiders
     يرجع dict فيه: sources, guide, summary, sell_price, weight, rarity, image_url
+    + (اختياري) repairing: معلومات تصليح لو كانت موجودة بالصفحة
     """
     if not raw_name:
         return {}
     
     slug = slugify_for_docs(raw_name)
+
+    # Cache hit
+    now_ts = time.time()
+    cached = _WIKI_CACHE.get(slug)
+    if cached:
+        cached_ts, cached_data = cached
+        if now_ts - cached_ts < WIKI_CACHE_TTL_SECONDS:
+            return cached_data
+
     result = {
         "item_name": raw_name,
         "sources": [],
@@ -84,6 +98,9 @@ async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
         "sell_price": "",
         "weight": "",
         "rarity": "",
+        "repair_raw": "",       # نص خام عن التصليح (fallback)
+        "repair_tiers": [],      # قائمة tiers منظمة إن قدرنا نحلل الجدول
+        "repair_summary": "",   # تلخيص قصير جاهز للعرض
         "image_url": "",  # صورة من الويكي
         "found": False  # علامة إذا لقينا الصفحة
     }
@@ -134,6 +151,106 @@ async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
                     guide_text = re.sub(r'<[^>]+>', ' ', guide_html)
                     guide_text = re.sub(r'\s+', ' ', guide_text).strip()
                     result["guide"] = guide_text[:1500]
+
+                # استخراج Repairing (لو موجود)
+                repairing_html = ""
+                repairing_match = re.search(
+                    r'<h2[^>]*>.*?Repairing.*?</h2>(.*?)(?=<h2|$)',
+                    html,
+                    re.DOTALL | re.IGNORECASE
+                )
+                if not repairing_match:
+                    repairing_match = re.search(
+                        r'<h3[^>]*>.*?Repairing.*?</h3>(.*?)(?=<h[23]|$)',
+                        html,
+                        re.DOTALL | re.IGNORECASE
+                    )
+                if repairing_match:
+                    repairing_html = repairing_match.group(1)
+
+                if repairing_html:
+                    # حاول نقرأ أي جدول داخل السكشن
+                    rows_html = re.findall(r'<tr[^>]*>(.*?)</tr>', repairing_html, re.DOTALL | re.IGNORECASE)
+                    rows = []
+                    for row in rows_html:
+                        cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.DOTALL | re.IGNORECASE)
+                        cleaned_cells = []
+                        for cell in cells:
+                            cell_text = re.sub(r'<[^>]+>', ' ', cell)
+                            cell_text = re.sub(r'\s+', ' ', cell_text).strip()
+                            if cell_text:
+                                cleaned_cells.append(cell_text)
+                        if cleaned_cells:
+                            rows.append(cleaned_cells)
+
+                    # تحليل الجدول لو لقينا Header واضح
+                    header_index = None
+                    header = []
+                    for i, r in enumerate(rows):
+                        if any('tier' in c.lower() for c in r):
+                            header_index = i
+                            header = [c.lower() for c in r]
+                            break
+
+                    def _find_col(keys: list[str]) -> int | None:
+                        for idx, col in enumerate(header):
+                            if any(k in col for k in keys):
+                                return idx
+                        return None
+
+                    def _extract_int(s: str) -> int | None:
+                        m = re.search(r'(\d+)', s or "")
+                        return int(m.group(1)) if m else None
+
+                    tiers = []
+                    if header_index is not None and header:
+                        col_tier = _find_col(['tier'])
+                        col_mech = _find_col(['mechanical'])
+                        col_simple = _find_col(['simple'])
+                        col_dur = _find_col(['durability', 'durability increase'])
+
+                        for r in rows[header_index + 1:]:
+                            if col_tier is None or len(r) <= col_tier:
+                                continue
+
+                            tier_name = (r[col_tier] or "").strip()
+                            if not tier_name:
+                                continue
+
+                            mech_qty = _extract_int(r[col_mech]) if (col_mech is not None and len(r) > col_mech) else None
+                            simple_qty = _extract_int(r[col_simple]) if (col_simple is not None and len(r) > col_simple) else None
+                            dur_val = (r[col_dur] or "").strip() if (col_dur is not None and len(r) > col_dur) else ""
+
+                            if mech_qty is None and simple_qty is None:
+                                continue
+
+                            tiers.append({
+                                'tier': tier_name,
+                                'mechanical_components': mech_qty,
+                                'simple_gun_parts': simple_qty,
+                                'durability': dur_val,
+                            })
+
+                    if tiers:
+                        result["repair_tiers"] = tiers
+                        chunks = []
+                        for t in tiers:
+                            tier_short = re.sub(r'(?i)tier\s*', '', t.get('tier', '')).strip() or t.get('tier', '')
+                            parts = []
+                            if t.get('mechanical_components') is not None:
+                                parts.append(f"{t['mechanical_components']} Mechanical Components")
+                            if t.get('simple_gun_parts') is not None:
+                                parts.append(f"{t['simple_gun_parts']} Simple Gun Parts")
+                            chunk = f"{tier_short}: " + " + ".join(parts)
+                            if t.get('durability'):
+                                chunk += f" ({t['durability']})"
+                            chunks.append(chunk)
+                        result["repair_summary"] = "; ".join(chunks)[:800]
+                    else:
+                        # fallback: نخزن النص الخام للسكشن
+                        repair_text = re.sub(r'<[^>]+>', ' ', repairing_html)
+                        repair_text = re.sub(r'\s+', ' ', repair_text).strip()
+                        result["repair_raw"] = repair_text[:1500]
                 
                 # استخراج Sell Price
                 price_match = re.search(r'Sell Price[^>]*>.*?(\d[\d,]+)', html, re.DOTALL | re.IGNORECASE)
@@ -182,7 +299,10 @@ async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
                 
         except Exception as e:
             logger.error(f"Error fetching wiki for '{raw_name}': {e}")
-    
+
+    # Cache store (حتى لو ما لقينا الصفحة، نخزن لفترة قصيرة عشان ما نكرر الطلب)
+    _WIKI_CACHE[slug] = (time.time(), result)
+
     return result
 
 
@@ -210,6 +330,12 @@ def build_wiki_context(wiki_data: dict) -> str:
     if wiki_data.get("sources"):
         sources_list = ", ".join(wiki_data["sources"][:10])
         parts.append(f"مصادر الحصول عليه: {sources_list}")
+
+    # معلومات التصليح (لو موجودة)
+    if wiki_data.get("repair_summary"):
+        parts.append(f"التصليح: {wiki_data['repair_summary']}")
+    elif wiki_data.get("repair_raw"):
+        parts.append(f"التصليح (نص): {wiki_data['repair_raw'][:350]}")
     
     if wiki_data.get("guide"):
         parts.append(f"دليل اللاعب: {wiki_data['guide']}")
@@ -429,6 +555,112 @@ def validate_ai_response(response: str, wiki_data: dict | None) -> str:
             break
     
     return response
+
+
+def normalize_official_map_names(text: str) -> str:
+    """تصحيح أسماء الخرائط لو الـ AI كتبها بشكل مختصر."""
+    if not text:
+        return text
+
+    # استبدال Spaceport (كخريطة) إلى The Spaceport
+    # نخلي اللي داخل أقواس مثل (Spaceport) لأنه غالباً اسم منطقة فرعية
+    text = re.sub(r'(?<!The\s)\bSpaceport\b(?!\))', 'The Spaceport', text, flags=re.IGNORECASE)
+    text = re.sub(r'(?<!The\s)\bBlue\s+Gate\b', 'The Blue Gate', text, flags=re.IGNORECASE)
+    return text
+
+
+def detect_best_location_from_guide(guide_text: str) -> tuple[str, list[str]]:
+    """يحاول يطلع الخريطة/المنطقة الأفضل من نص دليل الويكي."""
+    if not guide_text:
+        return "", []
+
+    g = guide_text.lower()
+    best_map = ""
+    if "blue gate" in g:
+        best_map = "The Blue Gate"
+    elif "spaceport" in g:
+        best_map = "The Spaceport"
+    elif "buried city" in g:
+        best_map = "Buried City"
+    elif "dam battlegrounds" in g:
+        best_map = "Dam Battlegrounds"
+
+    # مناطق فرعية شائعة (اختياري)
+    sub_locations = []
+    for key in [
+        "checkpoint", "warehouse", "parking garage",
+        "rocket assembly", "vehicle maintenance",
+        "scrap yard", "hydroponic dome", "water treatment", "power generation",
+    ]:
+        if key in g:
+            # نحافظ على الكابيتال الطبيعي
+            sub_locations.append(" ".join([w.capitalize() for w in key.split()]))
+
+    # إزالة التكرار مع الحفاظ على الترتيب
+    seen = set()
+    uniq_sub = []
+    for s in sub_locations:
+        if s.lower() not in seen:
+            uniq_sub.append(s)
+            seen.add(s.lower())
+
+    return best_map, uniq_sub
+
+
+def build_location_or_obtain_answer_from_wiki(item_name: str, wiki_data: dict) -> str | None:
+    """يبني جواب ثابت (3 جمل) لأسئلة: وين/كيف أحصل."""
+    if not wiki_data or not wiki_data.get("found"):
+        return None
+
+    sources = wiki_data.get("sources") or []
+    guide = (wiki_data.get("guide") or "").strip()
+    sell_price = (wiki_data.get("sell_price") or "").strip()
+    weight = (wiki_data.get("weight") or "").strip()
+
+    # الجملة 1: مصادر الحصول
+    if sources:
+        src_text = ", ".join(sources[:5])
+        s1 = f"تلقاه غالباً من لوت/سكراب صناعي مثل: {src_text}."
+    else:
+        s1 = f"تلقاه غالباً من لوت المناطق الصناعية والـ scavenging."
+
+    # الجملة 2: أفضل مكان
+    best_map, subs = detect_best_location_from_guide(guide)
+    if best_map and subs:
+        subs_text = " و".join(subs[:2])
+        s2 = f"أفضل مكان تفتّش فيه {subs_text} في {best_map}."
+    elif best_map:
+        s2 = f"أفضل مكان تفتّش فيه {best_map}."
+    elif guide:
+        s2 = f"حسب الويكي، ركّز على الأماكن اللي فيها سيارات/معدات ثقيلة وبكثافة."  # fallback عام
+    else:
+        s2 = "جرّب تفتّش حول السيارات والباصات وصناديق الحديد."  # fallback عام
+
+    # الجملة 3: معلومة عملية (بيع/وزن)
+    if sell_price:
+        s3 = f"ينباع عند التجار بـ {sell_price}، فلو ما تحتاجه خلّه فلوس." 
+    elif weight:
+        s3 = f"وزنه {weight} فحاول لا تكّومه إلا إذا تحتاجه للمهمات." 
+    else:
+        s3 = "إذا ما لقيته من أول رايد، لفّ على أكثر من لوت سبوت وبس." 
+
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_repair_answer_from_wiki(item_name: str, wiki_data: dict) -> str | None:
+    """يبني جواب ثابت (3 جمل) لأسئلة التصليح لو كانت بيانات التصليح متوفرة."""
+    if not wiki_data or not wiki_data.get("found"):
+        return None
+
+    repair_summary = (wiki_data.get("repair_summary") or "").strip()
+    if not repair_summary:
+        return None
+
+    # نخليها بسيطة وقابلة للقراءة
+    s1 = f"تصليح {item_name} يطلع لك على شكل تيرات (I إلى IV) وكل تير له تكلفة." 
+    s2 = f"حسب الويكي: {repair_summary}." 
+    s3 = "خلّك مجهّز Mechanical Components وSimple Gun Parts قبل لا تروح للورشة." 
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -901,7 +1133,7 @@ class AIManager:
         system_prompt = f"""أنت "دليل" - بوت مساعد لمجتمع ARC Raiders العربي. تتكلم زي لاعب سعودي خبير.
 
 قواعد الرد:
-1. رد بالعامية السعودية/الخليجية البسيطة (تلقاه، تفتّش، ما ينباع، وش، وين، كذا).
+1. رد بالعامية السعودية/الخليجية البسيطة (تلقاه، تفتّش، ينباع/ما ينباع، وش، وين، كذا).
 2. ابدأ بجملة مباشرة تجيب على السؤال.
 3. ثلاث جمل قصيرة كحد أقصى.
 4. لا تستخدم نقاط أو قوائم أو تعداد.
@@ -1868,12 +2100,88 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
     # ═══════════════════════════════════════════════════════════
     
     location_keywords = ['وين', 'اين', 'أين', 'فين', 'location', 'where', 'place', 'spot', 'spawn']
-    obtain_keywords = ['كيف احصل', 'كيف أجيب', 'من وين', 'drop', 'drops', 'loot', 'يطيح']
-    crafting_keywords = ['recipe', 'craft', 'تصنع', 'تصنيع', 'مخطط', 'متطلبات', 'مكونات']
+    obtain_keywords = ['كيف احصل', 'كيف أجيب', 'من وين', 'drop', 'drops', 'loot', 'يطيح', 'يحصل', 'احصل']
+    repair_keywords = ['repair', 'repairing', 'تصليح', 'تصلح', 'إصلاح', 'اصلح', 'أصلح', 'fix']
+    # ملاحظة: "متطلبات" كلمة عامة، فلا نحسبها Crafting لو السؤال واضح إنه Repair
+    crafting_keywords = ['recipe', 'craft', 'تصنع', 'تصنيع', 'مخطط', 'مكونات', 'blueprint', 'وصفة']
     
     is_location_question = any(k in q_lower for k in location_keywords)
     is_obtain_question = any(k in q_lower for k in obtain_keywords)
-    is_crafting_question = any(k in q_lower for k in crafting_keywords)
+    is_repair_question = any(k in q_lower for k in repair_keywords)
+    is_crafting_question = (any(k in q_lower for k in crafting_keywords) or 'متطلبات' in q_lower) and not is_repair_question
+
+    # ═══════════════════════════════════════════════════════════
+    # وضعيات التشغيل (AI_MODE)
+    # - ai_only: نفس سلوكك الحالي (يستخدم AI دائماً)
+    # - wiki_first: لو عندنا ويكي واضح، نبني جواب ثابت للـ intents الشائعة ونوفر AI
+    # - wiki_only: لا يستخدم AI أبداً
+    # ═══════════════════════════════════════════════════════════
+
+    focus_display_name = focus_item_name or focus_name or (wiki_data.get('item_name') if wiki_data else '') or "العنصر"
+    direct_answer = None
+
+    if AI_MODE in ("wiki_first", "wiki_only"):
+        if is_repair_question:
+            direct_answer = build_repair_answer_from_wiki(focus_display_name, wiki_data)
+        elif is_location_question or is_obtain_question:
+            direct_answer = build_location_or_obtain_answer_from_wiki(focus_display_name, wiki_data)
+
+    # لو عندنا جواب ثابت من الويكي، نرسله مباشرة (يوفر AI ويمنع الهلوسة)
+    if direct_answer:
+        await thinking_msg.delete()
+
+        answer = direct_answer
+        embed = discord.Embed(
+            description=answer,
+            color=COLORS["success"],
+            timestamp=datetime.now()
+        )
+
+        # إضافة صورة (نفس منطق الـ AI)
+        img_url = None
+        if focus_item:
+            item_id = focus_item.get('id') or focus_item.get('itemId') or focus_item.get('slug')
+            if item_id:
+                item_type = focus_item.get('type') or focus_item.get('category') or ''
+                if isinstance(item_type, dict):
+                    item_type = item_type.get('en', '')
+                item_type_lower = str(item_type).lower()
+
+                if 'bot' in item_type_lower or 'enemy' in item_type_lower:
+                    folder = 'bots'
+                elif 'map' in item_type_lower:
+                    folder = 'maps'
+                elif 'trader' in item_type_lower:
+                    folder = 'traders'
+                else:
+                    folder = 'items'
+
+                img_url = f"{IMAGES_BASE_URL}/{folder}/{item_id}.png"
+
+        if not img_url and wiki_data and wiki_data.get("image_url"):
+            img_url = wiki_data["image_url"]
+
+        if img_url:
+            embed.set_thumbnail(url=img_url)
+
+        embed.set_footer(text=f"🤖 {BOT_NAME} | wiki")
+        await reply_with_feedback(message, embed)
+
+        if focus_item_name and focus_item:
+            bot.context_manager.set_context(message.author.id, focus_item_name, focus_item)
+        bot.questions_answered += 1
+        return
+
+    # لو الوضع wiki_only وما قدرنا نبني جواب ثابت، ما نستدعي AI
+    if AI_MODE == "wiki_only":
+        await thinking_msg.delete()
+        embed = EmbedBuilder.error(
+            "عذراً",
+            "ما قدرت أطلع جواب من الويكي/البيانات لهذا السؤال. جرب تكتب اسم العنصر بالإنجليزي أو صياغة أوضح."
+        )
+        await reply_with_feedback(message, embed)
+        bot.questions_answered += 1
+        return
     
     # بناء style_hint حسب نوع السؤال
     if is_location_question or is_obtain_question:
@@ -1893,11 +2201,19 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
                 if "blue gate" in guide_text.lower():
                     best_location = "The Blue Gate"
                 elif "spaceport" in guide_text.lower():
-                    best_location = "Spaceport"
+                    best_location = "The Spaceport"
                 elif "buried city" in guide_text.lower():
                     best_location = "Buried City"
                 elif "dam battlegrounds" in guide_text.lower():
                     best_location = "Dam Battlegrounds"
+
+        sell_hint = ""
+        if wiki_data and wiki_data.get("sell_price"):
+            sell_hint = f"- سعر البيع حسب الويكي: {wiki_data['sell_price']}\n"
+
+        weight_hint = ""
+        if wiki_data and wiki_data.get("weight"):
+            weight_hint = f"- الوزن حسب الويكي: {wiki_data['weight']}\n"
         
         style_hint = (
             "أنت لاعب سعودي خبير في ARC Raiders تشرح لصديقك.\n"
@@ -1908,10 +2224,26 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             f"{sources_hint}"
             f"{guide_hint}\n\n"
             "⚠️ قواعد مهمة:\n"
-            "- استخدم 'تلقاه' و'تفتّش' و'ما ينباع' مو 'يمكنك' و'يتوفر'\n"
+            "- استخدم 'تلقاه' و'تفتّش' و'ينباع/ما ينباع' مو 'يمكنك' و'يتوفر'\n"
+            "- لا تهلوس بسعر البيع: لو الويكي فيه Sell Price اذكره، وإذا ما فيه لا تخترع رقم\n"
+            f"{sell_hint}{weight_hint}"
             f"- أفضل مكان حسب الويكي: {best_location if best_location else 'شوف الدليل'}\n"
             "- استخدم المعلومات من دليل الويكي بالضبط\n"
             "- لا تخترع أسماء مناطق - قول 'المناطق الصناعية' بالعربي مو 'Industrial Zone'"
+        )
+    elif is_repair_question:
+        repair_hint = ""
+        if wiki_data and wiki_data.get("repair_summary"):
+            repair_hint = f"\n📍 Repairing (ويكي): {wiki_data['repair_summary']}"
+        elif wiki_data and wiki_data.get("repair_raw"):
+            repair_hint = f"\n📍 Repairing (ويكي نص): {wiki_data['repair_raw'][:500]}"
+
+        style_hint = (
+            "هذا سؤال عن التصليح في الورشة. جاوب بثلاث جمل بالعامية السعودية:\n"
+            "1) قل إنه التصليح على تيرات (I إلى IV) لو ينطبق.\n"
+            "2) اذكر المواد والكميات من قسم Repairing بالويكي (لا تخترع).\n"
+            "3) نصيحة سريعة (جهّز القطع قبل لا تروح للورشة)."
+            f"{repair_hint}"
         )
     elif is_crafting_question:
         style_hint = (
@@ -1943,9 +2275,13 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
     
     if ai_result['success']:
         answer = ai_result['answer']
-        
+
+        # تصحيح أسماء الخرائط (Spaceport -> The Spaceport) قبل/بعد التحقق
+        answer = normalize_official_map_names(answer)
+
         # ✅ التحقق من صحة الرد (المناطق الوهمية)
         answer = validate_ai_response(answer, wiki_data)
+        answer = normalize_official_map_names(answer)
         
         embed = discord.Embed(
             description=answer,
