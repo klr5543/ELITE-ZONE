@@ -41,9 +41,10 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
 # Bot Settings
 BOT_NAME = "دليل"
-BOT_VERSION = "2.2.0"  # Updated version
+BOT_VERSION = "2.2.1"  # Updated version
 
-AI_MODE = os.getenv("AI_MODE", "ai_only").lower()
+# الافتراضي: wiki_first لتقليل الهلوسة في أسئلة (وين/كيف أحصل + التصليح)
+AI_MODE = os.getenv("AI_MODE", "wiki_first").lower()
 
 # Wiki Cache (اختياري) لتقليل الضغط وتسريع الردود
 WIKI_CACHE_TTL_SECONDS = int(os.getenv("WIKI_CACHE_TTL", "600"))  # 10 دقائق افتراضي
@@ -184,12 +185,26 @@ async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
                             rows.append(cleaned_cells)
 
                     # تحليل الجدول لو لقينا Header واضح
+                    # (بعض الصفحات تستخدم Tier، وبعضها تستخدم Item/Repair Cost مثل صفحة Anvil)
                     header_index = None
                     header = []
                     for i, r in enumerate(rows):
-                        if any('tier' in c.lower() for c in r):
+                        lower_cells = [c.lower() for c in r]
+                        if any('tier' in c for c in lower_cells):
                             header_index = i
-                            header = [c.lower() for c in r]
+                            header = lower_cells
+                            break
+                        # Item + Repair Cost (أو Cost)
+                        if (
+                            any('item' in c for c in lower_cells)
+                            and (
+                                any('repair cost' in c for c in lower_cells)
+                                or (any('repair' in c for c in lower_cells) and any('cost' in c for c in lower_cells))
+                                or any(c.strip() == 'cost' for c in lower_cells)
+                            )
+                        ):
+                            header_index = i
+                            header = lower_cells
                             break
 
                     def _find_col(keys: list[str]) -> int | None:
@@ -204,43 +219,126 @@ async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
 
                     tiers = []
                     if header_index is not None and header:
-                        col_tier = _find_col(['tier'])
-                        col_mech = _find_col(['mechanical'])
-                        col_simple = _find_col(['simple'])
-                        col_dur = _find_col(['durability', 'durability increase'])
+                        has_tier_header = any('tier' in c for c in header)
 
-                        for r in rows[header_index + 1:]:
-                            if col_tier is None or len(r) <= col_tier:
-                                continue
+                        if has_tier_header:
+                            # حالة: جدول واضح فيه Tier + مواد
+                            col_tier = _find_col(['tier'])
+                            col_mech = _find_col(['mechanical'])
+                            col_simple = _find_col(['simple'])
+                            col_dur = _find_col(['durability', 'durability increase'])
 
-                            tier_name = (r[col_tier] or "").strip()
-                            if not tier_name:
-                                continue
+                            for r in rows[header_index + 1:]:
+                                if col_tier is None or len(r) <= col_tier:
+                                    continue
 
-                            mech_qty = _extract_int(r[col_mech]) if (col_mech is not None and len(r) > col_mech) else None
-                            simple_qty = _extract_int(r[col_simple]) if (col_simple is not None and len(r) > col_simple) else None
-                            dur_val = (r[col_dur] or "").strip() if (col_dur is not None and len(r) > col_dur) else ""
+                                tier_name = (r[col_tier] or "").strip()
+                                if not tier_name:
+                                    continue
 
-                            if mech_qty is None and simple_qty is None:
-                                continue
+                                mech_qty = _extract_int(r[col_mech]) if (col_mech is not None and len(r) > col_mech) else None
+                                simple_qty = _extract_int(r[col_simple]) if (col_simple is not None and len(r) > col_simple) else None
+                                dur_val = (r[col_dur] or "").strip() if (col_dur is not None and len(r) > col_dur) else ""
 
-                            tiers.append({
-                                'tier': tier_name,
-                                'mechanical_components': mech_qty,
-                                'simple_gun_parts': simple_qty,
-                                'durability': dur_val,
-                            })
+                                if mech_qty is None and simple_qty is None:
+                                    continue
+
+                                tiers.append({
+                                    'tier': tier_name,
+                                    'mechanical_components': mech_qty,
+                                    'simple_gun_parts': simple_qty,
+                                    'other_costs': [],
+                                    'durability': dur_val,
+                                })
+                        else:
+                            # حالة: جدول فيه Item / Repair Cost / Durability
+                            col_item = _find_col(['item'])
+                            col_cost = _find_col(['repair cost', 'cost'])
+                            col_dur = _find_col(['durability', 'durability increase'])
+
+                            for r in rows[header_index + 1:]:
+                                if col_item is None or col_cost is None:
+                                    continue
+                                if len(r) <= max(col_item, col_cost):
+                                    continue
+
+                                item_cell = (r[col_item] or "").strip()
+                                cost_cell = (r[col_cost] or "").strip()
+                                if not item_cell or not cost_cell:
+                                    continue
+
+                                # استخراج الرومان (I/II/III/IV) لو موجود آخر الاسم
+                                roman = None
+                                m = re.search(r'(?i)\b([IVX]{1,4})\b\s*$', item_cell)
+                                if m:
+                                    roman = m.group(1).upper()
+                                if not roman:
+                                    m = re.search(r'(?i)tier\s*([IVX]{1,4})', item_cell)
+                                    if m:
+                                        roman = m.group(1).upper()
+
+                                tier_name = roman or item_cell
+                                dur_val = (r[col_dur] or "").strip() if (col_dur is not None and len(r) > col_dur) else ""
+
+                                mech_qty = None
+                                simple_qty = None
+                                other_costs: list[tuple[int, str]] = []
+
+                                # Normalize separators/symbols
+                                cost_norm = cost_cell.replace('×', 'x')
+
+                                # استخراج مواد عامة: "2 Mechanical Components" ... إلخ
+                                mats = re.findall(r'(\d+)\s*(?:x\s*)?([A-Za-z][A-Za-z ]+)', cost_norm)
+                                for qty_str, mat in mats:
+                                    qty = int(qty_str)
+                                    mat_clean = re.sub(r'\s+', ' ', mat).strip()
+                                    mat_clean = re.sub(r'\s*\+$', '', mat_clean).strip()
+                                    mat_lower = mat_clean.lower()
+
+                                    # تجاهل أي التقاط خاطئ لكلمة Durability
+                                    if 'durability' in mat_lower:
+                                        continue
+
+                                    if 'mechanical component' in mat_lower:
+                                        mech_qty = qty
+                                    elif 'simple gun part' in mat_lower:
+                                        simple_qty = qty
+                                    else:
+                                        other_costs.append((qty, mat_clean))
+
+                                # fallback إضافي لو ما التقطنا
+                                if mech_qty is None:
+                                    mm = re.search(r'(\d+)\s*mechanical components', cost_norm, re.IGNORECASE)
+                                    if mm:
+                                        mech_qty = int(mm.group(1))
+                                if simple_qty is None:
+                                    mm = re.search(r'(\d+)\s*simple gun parts', cost_norm, re.IGNORECASE)
+                                    if mm:
+                                        simple_qty = int(mm.group(1))
+
+                                if mech_qty is None and simple_qty is None and not other_costs:
+                                    continue
+
+                                tiers.append({
+                                    'tier': tier_name,
+                                    'mechanical_components': mech_qty,
+                                    'simple_gun_parts': simple_qty,
+                                    'other_costs': other_costs,
+                                    'durability': dur_val,
+                                })
 
                     if tiers:
                         result["repair_tiers"] = tiers
                         chunks = []
                         for t in tiers:
-                            tier_short = re.sub(r'(?i)tier\s*', '', t.get('tier', '')).strip() or t.get('tier', '')
+                            tier_short = re.sub(r'(?i)tier\s*', '', str(t.get('tier', '') or '')).strip() or str(t.get('tier', ''))
                             parts = []
                             if t.get('mechanical_components') is not None:
                                 parts.append(f"{t['mechanical_components']} Mechanical Components")
                             if t.get('simple_gun_parts') is not None:
                                 parts.append(f"{t['simple_gun_parts']} Simple Gun Parts")
+                            for qty, mat in (t.get('other_costs') or [])[:2]:
+                                parts.append(f"{qty} {mat}")
                             chunk = f"{tier_short}: " + " + ".join(parts)
                             if t.get('durability'):
                                 chunk += f" ({t['durability']})"
@@ -653,6 +751,28 @@ def build_repair_answer_from_wiki(item_name: str, wiki_data: dict) -> str | None
         return None
 
     repair_summary = (wiki_data.get("repair_summary") or "").strip()
+
+    # fallback: لو ما قدرنا نحلل الجدول، نحاول نطلع ملخص من النص الخام
+    if not repair_summary:
+        raw = (wiki_data.get("repair_raw") or "").strip()
+        if raw:
+            raw_norm = re.sub(r'\s+', ' ', raw)
+            pattern = re.compile(
+                r'\b([IVX]{1,4})\b.*?(\d+)\s*Mechanical Components.*?(\d+)\s*Simple Gun Parts(?:.*?(\+?\d+)\s*Durability)?',
+                re.IGNORECASE
+            )
+            found = pattern.findall(raw_norm)
+            if found:
+                chunks = []
+                for roman, mech, simple, dur in found[:4]:
+                    roman = roman.upper()
+                    part = f"{roman}: {int(mech)} Mechanical Components + {int(simple)} Simple Gun Parts"
+                    if dur:
+                        dur_clean = dur.strip()
+                        part += f" ({dur_clean} Durability)" if 'durability' not in dur_clean.lower() else f" ({dur_clean})"
+                    chunks.append(part)
+                repair_summary = "; ".join(chunks)[:800]
+
     if not repair_summary:
         return None
 
@@ -1603,6 +1723,9 @@ class EmbedBuilder:
 🌐 Google: **{ai_stats.get('google', 0)}**
 """
         embed.add_field(name="🤖 استخدام AI", value=ai_text, inline=True)
+
+        # عرض وضع التشغيل الحالي (ai_only / wiki_first / wiki_only)
+        embed.add_field(name="⚙️ وضع الإجابة", value=f"**{AI_MODE}**", inline=False)
         
         embed.add_field(name="⏱️ وقت التشغيل", value=uptime, inline=False)
         embed.set_footer(text=f"🤖 {BOT_NAME} v{BOT_VERSION}")
