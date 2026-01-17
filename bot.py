@@ -2292,54 +2292,6 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
         focus_item = search_results[0]['item']
         focus_item_name = bot.search_engine.extract_name(focus_item)
         img_url = EmbedBuilder.get_image_url(focus_item)
-        
-        description = None
-        if isinstance(focus_item, dict) and 'description' in focus_item:
-            desc_val = focus_item['description']
-            if isinstance(desc_val, dict):
-                description = desc_val.get('en') or desc_val.get('ar') or next(iter(desc_val.values()), None)
-            else:
-                description = str(desc_val)
-        
-        item_type = EmbedBuilder.extract_field(focus_item, 'type') or ''
-        rarity = EmbedBuilder.extract_field(focus_item, 'rarity') or ''
-        found_in = focus_item.get('foundIn') or ''
-        location_field = focus_item.get('location') or focus_item.get('spawn_location') or focus_item.get('map')
-        if isinstance(location_field, dict):
-            location_field = location_field.get('en') or location_field.get('ar') or next(iter(location_field.values()), None)
-        spawn_rate = focus_item.get('spawnRate') or focus_item.get('spawn_rate') or ''
-        price = focus_item.get('price') or focus_item.get('value') or ''
-        
-        parts = []
-        if focus_item_name:
-            parts.append(f"الاسم من الداتا: {focus_item_name}")
-        if description:
-            parts.append(f"وصف قصير من الداتا: {description}")
-        if item_type:
-            parts.append(f"النوع في الداتا: {item_type}")
-        if rarity:
-            parts.append(f"درجة الندرة في الداتا: {rarity}")
-        if found_in:
-            parts.append(f"تصنيف منطقة اللوت في الداتا: {found_in}")
-        if location_field and location_field != found_in:
-            parts.append(f"موقع تفصيلي إن وجد في الداتا: {location_field}")
-        if spawn_rate:
-            parts.append(f"نسبة ظهور تقريبية من الداتا إن وجدت: {spawn_rate}")
-        if price:
-            parts.append(f"قيمة تقريبية في الداتا: {price}")
-        
-        if parts:
-            db_context = " | ".join(parts)
-            wrapped_db_context = (
-                "ملخص مختصر من داتا ARC Raiders عن العناصر المرتبطة بسؤال اللاعب. "
-                "مهم جداً: لا تخترع أسماء خرائط أو سبون دقيق إذا ما كان موجود لا في الداتا ولا في الويكي. "
-                "لو المعلومة عامة فقط (مثل كلمة Industrial بدون تفاصيل)، وضّح للمستخدم أنها معلومة عامة وليست مكاناً محدداً.\n"
-                f"{db_context}"
-            )
-            if context:
-                context = context + " | " + wrapped_db_context
-            else:
-                context = wrapped_db_context
     
     expedition_keywords = [
         'expedition project',
@@ -2556,7 +2508,60 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
         else:
             context = "معلومات من ويكي ARC Raiders: " + extra_docs
     
-    ai_result = await bot.ai_manager.ask_ai(question, context)
+    is_location_question = False
+    is_obtain_question = False
+    is_crafting_question = False
+    
+    location_keywords = ['وين', 'اين', 'أين', 'فين', 'location', 'where', 'place', 'spot', 'spawn']
+    obtain_keywords = [
+        'كيف احصل', 'كيف أجيب', 'كيف اجيب',
+        'من وين', 'من وين اجيب', 'من وين احصل',
+        'وين القا', 'وين القى', 'وين الاقي',
+        'drop', 'drops', 'loot', 'يطيح', 'يندر', 'يطلع'
+    ]
+    crafting_keywords = [
+        'recipe', 'craft', 'تصنع', 'تصنيع',
+        'مخطط', 'متطلبات', 'مكونات'
+    ]
+    
+    ql = q_lower
+    if any(k in ql for k in location_keywords):
+        is_location_question = True
+    if any(k in ql for k in obtain_keywords):
+        is_obtain_question = True
+    if any(k in ql for k in crafting_keywords):
+        is_crafting_question = True
+    
+    style_hint = ""
+    if is_location_question or is_obtain_question:
+        style_hint = (
+            "هذا سؤال عن مكان الحصول على غرض في ARC Raiders. "
+            "اعتمد على المعلومات المرفقة من الداتا والويكي، خصوصاً أسماء الخرائط، الزونات، وأنواع الصناديق. "
+            "اذكر بوضوح أهم 2 أو 3 أماكن أو زونات أو حاويات يظهر فيها الغرض غالباً "
+            "مثل Checkpoint, Warehouse, Scrap Yard وغيرها إذا كانت مذكورة، "
+            "ثم أضف جملة نصيحة قصيرة عن الاستعداد أو المخاطر. "
+            "اكتب الإجابة في جملة أو ثلاث جمل بدون قوائم طويلة أو تكرار نص الويكي حرفياً."
+        )
+    elif is_crafting_question:
+        style_hint = (
+            "هذا سؤال عن التصنيع. استخدم بيانات الداتا والويكي لشرح بشكل مختصر "
+            "متى ولماذا يحتاج اللاعب هذا الغرض في التصنيع، وما هو دوره في الترقيات، "
+            "مع تلميح بسيط عن كيفية تجهيز المواد المطلوبة."
+        )
+    else:
+        style_hint = (
+            "اشرح الفكرة بأبسط شكل ممكن في جمل قليلة، "
+            "باستخدام المعلومات المرفقة من الداتا والويكي بدون نسخ حرفي أو قوائم طويلة."
+        )
+    
+    ai_prompt = (
+        f"{style_hint}\n\n"
+        f"سؤال اللاعب: {question}\n\n"
+        "اكتب الإجابة بالعربي الواضح القريب من كلام اللاعبين، "
+        "وبدون استخدام ترقيم أو نقاط، فقط نص متصل قصير."
+    )
+    
+    ai_result = await bot.ai_manager.ask_ai(ai_prompt, context)
     
     await thinking_msg.delete()
     
