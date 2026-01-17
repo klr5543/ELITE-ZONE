@@ -505,7 +505,7 @@ def is_ai_configured() -> bool:
 # روابط الصور والألوان
 # ═══════════════════════════════════════════════════════════════
 
-IMAGES_BASE_URL = "https://raw.githubusercontent.com/RaidTheory/arcraiders-data/main/images"
+IMAGES_BASE_URL = "https://raw.githubusercontent.com/ELITE-ZONE/arcraiders-data/main/images"
 
 COLORS = {
     "success": 0x2ecc71,
@@ -1227,10 +1227,12 @@ class EmbedBuilder:
     
     @staticmethod
     def get_image_url(item: dict) -> str:
+        # أولاً: لو فيه رابط صورة مباشر
         img_url = item.get('image') or item.get('icon') or item.get('imageUrl')
         if img_url and isinstance(img_url, str) and img_url.startswith('http'):
             return img_url
         
+        # ثانياً: لو فيه اسم ملف محدد
         filename = item.get('imageFilename')
         if filename and isinstance(filename, str):
             if filename.startswith('http'):
@@ -1239,8 +1241,26 @@ class EmbedBuilder:
                 filename = filename.lstrip('/')
             return f"{IMAGES_BASE_URL}/{filename}"
         
+        # ثالثاً: نبني الرابط من الـ ID أو الاسم
         item_id = item.get('id') or item.get('itemId') or item.get('slug')
+        
+        # لو ما فيه ID، نستخدم الاسم
+        if not item_id:
+            name = item.get('name') or item.get('title') or item.get('displayName')
+            if isinstance(name, dict):
+                name = name.get('en') or list(name.values())[0]
+            if name:
+                # نحول الاسم لتنسيق الملف: lowercase + underscores
+                item_id = name.lower().strip()
+                item_id = re.sub(r'[^a-z0-9\s]', '', item_id)  # نشيل الرموز
+                item_id = re.sub(r'\s+', '_', item_id)  # نحول المسافات لـ _
+        
         if item_id:
+            # نتأكد التنسيق صحيح
+            item_id = str(item_id).lower().strip()
+            item_id = item_id.replace(' ', '_').replace('-', '_')
+            
+            # نحدد المجلد حسب النوع
             item_type = item.get('type') or item.get('category') or ''
             if isinstance(item_type, dict):
                 item_type = item_type.get('en', '')
@@ -1751,13 +1771,39 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
     focus_item = None
     focus_item_name = None
     
+    # استخراج اسم العنصر من السؤال (الكلمات الإنجليزية)
+    english_words_in_question = re.findall(r'[A-Za-z][A-Za-z0-9_\s\-]+', question)
+    search_term = None
+    
+    if english_words_in_question:
+        # نأخذ أطول كلمة/عبارة إنجليزية (غالباً اسم العنصر)
+        search_term = max(english_words_in_question, key=len).strip()
+    
+    # نبحث بالاسم الإنجليزي أولاً
     try:
-        search_results = bot.search_engine.search(question, limit=1)
+        if search_term and len(search_term) >= 3:
+            search_results = bot.search_engine.search(search_term, limit=1)
+        else:
+            search_results = bot.search_engine.search(question, limit=1)
+        
         if search_results and search_results[0]['score'] > 0.4:
             focus_item = search_results[0]['item']
             focus_item_name = bot.search_engine.extract_name(focus_item)
-    except:
-        pass
+            
+            # تأكد إن الاسم يطابق اللي نبحث عنه
+            if search_term:
+                item_name_lower = focus_item_name.lower().replace('_', ' ')
+                search_term_lower = search_term.lower().replace('_', ' ')
+                
+                # لو الاسم ما يتطابق، نعتبره غلط
+                if search_term_lower not in item_name_lower and item_name_lower not in search_term_lower:
+                    logger.warning(f"Search mismatch: searched '{search_term}' but got '{focus_item_name}'")
+                    # نمسح النتيجة الغلط
+                    focus_item = None
+                    focus_item_name = None
+    except Exception as e:
+        logger.warning(f"Search error: {e}")
+        search_results = None
     
     # ═══════════════════════════════════════════════════════════
     # إضافة سياق ثابت للمواضيع المعروفة
@@ -1834,26 +1880,38 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
         # نبني prompt أقوى يستخدم بيانات الويكي
         sources_hint = ""
         guide_hint = ""
+        best_location = ""
         
         if wiki_data:
             if wiki_data.get("sources"):
-                sources_hint = f"\nالمصادر من الويكي: {', '.join(wiki_data['sources'][:8])}"
+                sources_hint = f"\n📦 المصادر: {', '.join(wiki_data['sources'][:8])}"
             if wiki_data.get("guide"):
-                guide_hint = f"\nدليل الويكي: {wiki_data['guide'][:400]}"
+                guide_text = wiki_data['guide'][:600]
+                guide_hint = f"\n📍 دليل الويكي: {guide_text}"
+                
+                # استخراج أفضل مكان من الدليل
+                if "blue gate" in guide_text.lower():
+                    best_location = "The Blue Gate"
+                elif "spaceport" in guide_text.lower():
+                    best_location = "Spaceport"
+                elif "buried city" in guide_text.lower():
+                    best_location = "Buried City"
+                elif "dam battlegrounds" in guide_text.lower():
+                    best_location = "Dam Battlegrounds"
         
         style_hint = (
             "أنت لاعب سعودي خبير في ARC Raiders تشرح لصديقك.\n"
-            "جاوب بثلاث جمل قصيرة بالعامية السعودية البسيطة:\n\n"
+            "جاوب بثلاث جمل قصيرة بالعامية السعودية:\n\n"
             "الجملة 1: 'تلقاه غالباً في <نوع المناطق/الحاويات>'\n"
-            "الجملة 2: 'أفضل مكان تفتّش فيه <اسم المنطقة الحقيقي>'\n"
-            "الجملة 3: معلومة عملية (ينباع عند التجار ولا لا، أو نصيحة سريعة)\n\n"
+            "الجملة 2: 'أفضل مكان تفتّش فيه <المنطقة من دليل الويكي>'\n"
+            "الجملة 3: معلومة عملية (ينباع عند التجار ولا لا، أو نصيحة)\n\n"
             f"{sources_hint}"
             f"{guide_hint}\n\n"
             "⚠️ قواعد مهمة:\n"
             "- استخدم 'تلقاه' و'تفتّش' و'ما ينباع' مو 'يمكنك' و'يتوفر'\n"
-            "- أسماء المناطق بالإنجليزي: Dam Battlegrounds, The Spaceport, Buried City, The Blue Gate\n"
-            "- لا تخترع أسماء مثل 'Industrial Zone' - قول 'المناطق الصناعية' بالعربي\n"
-            "- خل الرد قصير ومباشر زي ما يتكلم اللاعبين"
+            f"- أفضل مكان حسب الويكي: {best_location if best_location else 'شوف الدليل'}\n"
+            "- استخدم المعلومات من دليل الويكي بالضبط\n"
+            "- لا تخترع أسماء مناطق - قول 'المناطق الصناعية' بالعربي مو 'Industrial Zone'"
         )
     elif is_crafting_question:
         style_hint = (
@@ -1895,12 +1953,34 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             timestamp=datetime.now()
         )
         
-        # إضافة صورة - نفضل صورة الويكي
+        # إضافة صورة
         img_url = None
-        if wiki_data and wiki_data.get("image_url"):
+        
+        # الأولوية للـ item من البحث في الـ database
+        if focus_item:
+            # نستخدم الـ item ID من الـ database
+            item_id = focus_item.get('id') or focus_item.get('itemId') or focus_item.get('slug')
+            if item_id:
+                # نحدد المجلد حسب نوع العنصر
+                item_type = focus_item.get('type') or focus_item.get('category') or ''
+                if isinstance(item_type, dict):
+                    item_type = item_type.get('en', '')
+                item_type_lower = str(item_type).lower()
+                
+                if 'bot' in item_type_lower or 'enemy' in item_type_lower:
+                    folder = 'bots'
+                elif 'map' in item_type_lower:
+                    folder = 'maps'
+                elif 'trader' in item_type_lower:
+                    folder = 'traders'
+                else:
+                    folder = 'items'
+                
+                img_url = f"{IMAGES_BASE_URL}/{folder}/{item_id}.png"
+        
+        # لو ما نجح، نجرب من الويكي
+        if not img_url and wiki_data and wiki_data.get("image_url"):
             img_url = wiki_data["image_url"]
-        elif focus_item:
-            img_url = EmbedBuilder.get_image_url(focus_item)
         
         if img_url:
             embed.set_thumbnail(url=img_url)
