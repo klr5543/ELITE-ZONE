@@ -96,6 +96,33 @@ def normalize_key(name) -> list[str]:
     return keys
 
 
+def _find_first_by_keys(index: dict, base_name: str) -> dict | None:
+    if not base_name:
+        return None
+    for k in normalize_key(base_name):
+        lst = index.get(k)
+        if lst:
+            return lst[0]
+    return None
+
+
+def _find_first_with_tiers(index: dict, base_name: str) -> dict | None:
+    item = _find_first_by_keys(index, base_name)
+    if item:
+        return item
+    if not base_name:
+        return None
+    tier_variants = [
+        f"{base_name} I", f"{base_name} II", f"{base_name} III", f"{base_name} IV",
+        f"{base_name} 1", f"{base_name} 2", f"{base_name} 3", f"{base_name} 4",
+    ]
+    for name in tier_variants:
+        item = _find_first_by_keys(index, name)
+        if item:
+            return item
+    return None
+
+
 async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
     """
     يجيب معلومات منظمة من ويكي ARC Raiders
@@ -2631,6 +2658,7 @@ async def on_message(message: discord.Message):
 
 async def ask_ai_and_reply(message: discord.Message, question: str):
     """سؤال الـ AI والرد"""
+    global ANSWER_SOURCE_STATS, LAST_ANSWER_SOURCE
     thinking_msg = await message.reply("🔍 أبحث لك...")
     
     context = ""
@@ -2809,11 +2837,7 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             item_local = focus_item
         else:
             if focus_display_name:
-                for k in normalize_key(focus_display_name):
-                    lst = db.crafting_index.get(k)
-                    if lst:
-                        item_local = lst[0]
-                        break
+                item_local = _find_first_with_tiers(db.crafting_index, focus_display_name)
         if item_local:
             direct_answer = build_crafting_answer_from_local(item_local)
             if direct_answer:
@@ -2922,6 +2946,12 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
         direct_answer = build_location_or_obtain_answer_from_wiki(focus_display_name, wiki_data)
         if direct_answer:
             direct_source = "wiki"
+        else:
+            s1 = f"ما لقيت مصادر مؤكدة في الويكي لـ {focus_display_name}."
+            s2 = "إذا تبي 'وين أحصل' بشكل دقيق، اكتب اسم العنصر بالإنجليزي أو جرّب /checkwiki للتأكد من الويكي."
+            s3 = "حالياً ما راح أعطيك أماكن من عندي عشان ما أضللك."
+            direct_answer = normalize_official_map_names(" ".join([s1, s2, s3]))
+            direct_source = "safe"
     if intent == "blueprint" and not direct_answer and AI_MODE in ("wiki_first", "wiki_only"):
         direct_answer = build_blueprint_answer_from_wiki(focus_display_name, wiki_data)
         if direct_answer:
@@ -2974,7 +3004,6 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
         else:
             footer_text = f"🤖 {BOT_NAME}"
         embed.set_footer(text=footer_text)
-        global ANSWER_SOURCE_STATS, LAST_ANSWER_SOURCE
         if source_label in ANSWER_SOURCE_STATS:
             ANSWER_SOURCE_STATS[source_label] = ANSWER_SOURCE_STATS.get(source_label, 0) + 1
         else:
@@ -3139,7 +3168,6 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             embed.set_thumbnail(url=img_url)
         
         embed.set_footer(text=f"🤖 {BOT_NAME}")
-        global ANSWER_SOURCE_STATS, LAST_ANSWER_SOURCE
         ANSWER_SOURCE_STATS["ai"] = ANSWER_SOURCE_STATS.get("ai", 0) + 1
         LAST_ANSWER_SOURCE = "ai"
     else:
