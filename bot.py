@@ -1996,6 +1996,9 @@ class ContextManager:
         context = self.get_context(user_id)
         if not context:
             return question
+
+        if re.search(r'[A-Za-z][A-Za-z0-9_\-]{2,}', question):
+            return question
         
         follow_up_keywords = [
             'نسبة', 'spawn', 'الموقع', 'location', 'وين', 'where',
