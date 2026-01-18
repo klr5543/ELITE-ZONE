@@ -50,6 +50,14 @@ AI_MODE = os.getenv("AI_MODE", "wiki_first").lower()
 WIKI_CACHE_TTL_SECONDS = int(os.getenv("WIKI_CACHE_TTL", "600"))  # 10 دقائق افتراضي
 _WIKI_CACHE: dict[str, tuple[float, dict]] = {}
 
+ANSWER_SOURCE_STATS = {
+    "local": 0,
+    "wiki": 0,
+    "safe": 0,
+    "ai": 0,
+}
+LAST_ANSWER_SOURCE = ""
+
 # ═══════════════════════════════════════════════════════════════
 # Logging
 # ═══════════════════════════════════════════════════════════════
@@ -70,6 +78,22 @@ def slugify_for_docs(name: str) -> str:
     name = re.sub(r'\s+', ' ', name)
     name = re.sub(r'[^A-Za-z0-9 _-]', '', name)
     return name.replace(' ', '_')
+
+
+def normalize_key(name) -> list[str]:
+    if not name:
+        return []
+    s = str(name).lower()
+    s = s.strip()
+    s = re.sub(r'[^\w\s-]+', ' ', s)
+    s = re.sub(r'\s+', ' ', s)
+    if not s:
+        return []
+    keys = []
+    for variant in (s, s.replace(' ', '_'), s.replace(' ', '-')):
+        if variant and variant not in keys:
+            keys.append(variant)
+    return keys
 
 
 async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
@@ -108,37 +132,74 @@ async def fetch_doc_snippet(raw_name: str, max_chars: int = 2500) -> dict:
     
     timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        url = f"https://arcraiders.wiki/wiki/{slug}"
+        slug_cap = slug[:1].upper() + slug[1:] if slug else slug
+        slug_title = "-".join([w[:1].upper() + w[1:] for w in slug.split("-")]) if slug else slug
+        slug_candidates = []
+        for candidate in (slug_cap, slug, slug_title):
+            if candidate and candidate not in slug_candidates:
+                slug_candidates.append(candidate)
+
         try:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    return result
+            html = ""
+            used_slug = None
+            for candidate in slug_candidates:
+                api_url = "https://arcraiders.wiki/api.php"
+                params = {
+                    "action": "parse",
+                    "format": "json",
+                    "page": candidate,
+                    "prop": "text",
+                    "formatversion": "2",
+                }
+                html = ""
+                async with session.get(api_url, params=params) as resp_api:
+                    if resp_api.status == 200:
+                        data = await resp_api.json()
+                        parsed = data.get("parse")
+                        if parsed and isinstance(parsed, dict):
+                            text_html = parsed.get("text")
+                            if isinstance(text_html, str) and text_html:
+                                html = text_html
+                                result["found"] = True
+                                used_slug = candidate
+                                logger.debug(f"Wiki API fetch for '{raw_name}' using slug '{candidate}'")
+                if not result["found"]:
+                    url = f"https://arcraiders.wiki/wiki/{candidate}"
+                    async with session.get(url) as resp:
+                        if resp.status != 200:
+                            continue
+                        html = await resp.text()
+                        result["found"] = True
+                        used_slug = candidate
+                        logger.debug(f"Wiki fetch for '{raw_name}' using slug '{candidate}'")
+                if result["found"]:
+                    break
+
+            if not result["found"]:
+                return result
                 
-                html = await resp.text()
-                result["found"] = True
-                
-                # استخراج Sources
-                sources_match = re.search(
-                    r'<h2[^>]*>.*?Sources.*?</h2>(.*?)(?=<h2|$)',
-                    html,
-                    re.DOTALL | re.IGNORECASE
-                )
-                if sources_match:
-                    sources_html = sources_match.group(1)
-                    # استخراج من القوائم
-                    list_items = re.findall(r'<li[^>]*>(.*?)</li>', sources_html, re.DOTALL)
-                    for li in list_items:
-                        # استخراج النص من الروابط
-                        link_match = re.search(r'>([^<]+)</a>', li)
-                        if link_match:
-                            text = link_match.group(1).strip()
-                            if text and text.lower() not in ['edit', 'scavenging']:
-                                result["sources"].append(text)
-                        else:
-                            # نص بدون رابط
-                            text = re.sub(r'<[^>]+>', '', li).strip()
-                            if text and len(text) > 2:
-                                result["sources"].append(text)
+            # استخراج Sources
+            sources_match = re.search(
+                r'<h2[^>]*>.*?Sources.*?</h2>(.*?)(?=<h2|$)',
+                html,
+                re.DOTALL | re.IGNORECASE
+            )
+            if sources_match:
+                sources_html = sources_match.group(1)
+                # استخراج من القوائم
+                list_items = re.findall(r'<li[^>]*>(.*?)</li>', sources_html, re.DOTALL)
+                for li in list_items:
+                    # استخراج النص من الروابط
+                    link_match = re.search(r'>([^<]+)</a>', li)
+                    if link_match:
+                        text = link_match.group(1).strip()
+                        if text and text.lower() not in ['edit', 'scavenging']:
+                            result["sources"].append(text)
+                    else:
+                        # نص بدون رابط
+                        text = re.sub(r'<[^>]+>', '', li).strip()
+                        if text and len(text) > 2:
+                            result["sources"].append(text)
                 
                 # استخراج Guide
                 guide_match = re.search(
@@ -801,17 +862,306 @@ def build_repair_answer_from_wiki(item_name: str, wiki_data: dict) -> str | None
                 repair_summary = "; ".join(chunks)[:800]
 
     if not repair_summary:
-        if AI_MODE == "wiki_first":
-            s1 = f"الويكي حالياً ما فيه أرقام تصليح مؤكدة لـ {item_name}."
-            s2 = "ما أقدر أحدد تكاليف أو مواد التصليح بدون أرقام واضحة من قسم Repairing في الويكي."
-            s3 = "تعامل معها كنصيحة عامة واسأل اللاعبين أو شوف آخر تحديثات الويكي لو تحتاج تفاصيل دقيقة."
-            return normalize_official_map_names(" ".join([s1, s2, s3]))
         return None
 
     # نخليها بسيطة وقابلة للقراءة
     s1 = f"تصليح {item_name} يطلع لك على شكل تيرات (I إلى IV) وكل تير له تكلفة." 
     s2 = f"حسب الويكي: {repair_summary}." 
     s3 = "خلّك مجهّز Mechanical Components وSimple Gun Parts قبل لا تروح للورشة." 
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_blueprint_answer_from_wiki(item_name: str, wiki_data: dict) -> str | None:
+    if not wiki_data or not wiki_data.get("found"):
+        return None
+    sources = wiki_data.get("sources") or []
+    guide = (wiki_data.get("guide") or "").strip()
+    if sources:
+        src_text = ", ".join(sources[:5])
+        s1 = f"مخطط {item_name} تلقاه غالباً من مهام أو لوت مرتبط بـ: {src_text}."
+    else:
+        s1 = f"مخطط {item_name} يطيح عادة من مهام خاصة أو تشالنجات في الرايد."
+    if guide:
+        s2 = f"حسب دليل الويكي، ركّز على الأماكن أو المهمات اللي مذكورة هناك للمخطط."
+    else:
+        s2 = "جرّب تتابع المهمات اللي تطلب نفس السلاح أو القطعة عشان يطيح لك المخطط معها."
+    s3 = "إذا ما طلع لك بسرعة، استمر تلعب نفس نوع الرايد والمهمات لأن المخطط يعتمد على الحظ."
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_repair_answer_from_local_or_wiki(item: dict | None, item_name: str, wiki_data: dict | None) -> str | None:
+    return build_repair_answer_from_wiki(item_name, wiki_data or {})
+
+
+def build_safe_numeric_message(intent: str, item_name: str) -> str:
+    label = intent
+    if intent == "crafting":
+        label = "متطلبات التصنيع"
+    elif intent == "upgrade":
+        label = "تكلفة الترقية"
+    elif intent == "trader/price":
+        label = "سعر الشراء أو البيع"
+    elif intent == "repair":
+        label = "تكلفة التصليح"
+    elif intent == "recycle/salvage":
+        label = "تفكيك أو ريسايكل"
+    s1 = f"ما لقيت بيانات مؤكدة عن {label} لـ {item_name} في داتا اللعبة أو الويكي."
+    s2 = "ما راح أخترع أرقام أو مواد من عندي لأن هالشي ممكن يضللك وانت تلعب."
+    s3 = "اسأل اللاعبين في الشات أو شيّك آخر تحديثات الويكي لو تبي تفاصيل أدق."
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_crafting_answer_from_local(item: dict) -> str | None:
+    if not item or not isinstance(item, dict):
+        return None
+    recipe = item.get("recipe")
+    if not recipe or not isinstance(recipe, dict):
+        return None
+    name = None
+    try:
+        if bot and bot.search_engine:
+            name = bot.search_engine.extract_name(item)
+    except Exception:
+        name = None
+    if not name:
+        name = item.get("id") or "العنصر"
+    parts = []
+    for k, v in recipe.items():
+        try:
+            qty = int(v)
+        except Exception:
+            continue
+        mat = str(k).replace("_", " ")
+        parts.append(f"{qty} {mat}")
+    if not parts:
+        return None
+    req_text = " + ".join(parts[:6])
+    s1 = f"عشان تصنع {name}, لازم تروح لطاولة التصنيع المناسبة في الملجأ."
+    s2 = f"حسب داتا اللعبة، الوصفة تحتاج: {req_text}."
+    s3 = "جهّز المواد قبل الرايد عشان ما تضيع وقتك تجمعها وسط القيم."
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_upgrade_answer_from_local(item: dict) -> str | None:
+    if not item or not isinstance(item, dict):
+        return None
+    cost = item.get("upgradeCost")
+    if not cost or not isinstance(cost, dict):
+        return None
+    name = None
+    try:
+        if bot and bot.search_engine:
+            name = bot.search_engine.extract_name(item)
+    except Exception:
+        name = None
+    if not name:
+        name = item.get("id") or "العنصر"
+    parts = []
+    for k, v in cost.items():
+        try:
+            qty = int(v)
+        except Exception:
+            continue
+        mat = str(k).replace("_", " ")
+        parts.append(f"{qty} {mat}")
+    if not parts:
+        return None
+    req_text = " + ".join(parts[:6])
+    s1 = f"ترقية {name} تاخذك للتير اللي بعده في نفس السلاح."
+    s2 = f"تكلفة الترقية من داتا اللعبة: {req_text}."
+    s3 = "حاول تسوي الترقية في البيت قبل ما تطلع رايد عشان ما ينقصك شيء."
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_trader_answer_from_local(item: dict, trades: list[dict]) -> str | None:
+    if not item or not isinstance(item, dict):
+        return None
+    item_id = item.get("id")
+    if not item_id:
+        return None
+    item_id_norm = str(item_id).strip().lower()
+    offers = []
+    for t in trades or []:
+        if not isinstance(t, dict):
+            continue
+        tid = t.get("itemId")
+        if not tid:
+            continue
+        if str(tid).strip().lower() != item_id_norm:
+            continue
+        trader = t.get("trader") or ""
+        qty = t.get("quantity")
+        cost = t.get("cost") or {}
+        cost_item = cost.get("itemId")
+        cost_qty = cost.get("quantity")
+        offers.append((trader, qty, cost_item, cost_qty, t.get("dailyLimit")))
+    if not offers:
+        return None
+    name = None
+    try:
+        if bot and bot.search_engine:
+            name = bot.search_engine.extract_name(item)
+    except Exception:
+        name = None
+    if not name:
+        name = item_id
+    first = offers[0]
+    trader_name = str(first[0] or "تاجر").strip()
+    qty = first[1] or 1
+    cost_item = str(first[2] or "").replace("_", " ")
+    cost_qty = first[3] or 0
+    daily = first[4]
+    s1 = f"تقدر تشتري {name} من {trader_name} في سبيرانزا."
+    s2 = f"حسب داتا اللعبة، العرض يعطيك {qty} حبة مقابل {cost_qty} {cost_item}."
+    if daily is not None:
+        s3 = f"في حد يومي حوالي {daily} قطع، فانتبه لا تخلصه وانت محتاجه."
+    else:
+        s3 = "ما عليه حد يومي واضح، بس برضه اشتر على قد حاجتك عشان ما تضيع عملتك."
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_recycle_answer_from_local(item: dict) -> str | None:
+    if not item or not isinstance(item, dict):
+        return None
+    rec = item.get("recyclesInto")
+    sal = item.get("salvagesInto")
+    if not rec and not sal:
+        return None
+    name = None
+    try:
+        if bot and bot.search_engine:
+            name = bot.search_engine.extract_name(item)
+    except Exception:
+        name = None
+    if not name:
+        name = item.get("id") or "العنصر"
+    rec_parts = []
+    if isinstance(rec, dict):
+        for k, v in rec.items():
+            try:
+                qty = int(v)
+            except Exception:
+                continue
+            rec_parts.append(f"{qty} {str(k).replace('_', ' ')}")
+    sal_parts = []
+    if isinstance(sal, dict):
+        for k, v in sal.items():
+            try:
+                qty = int(v)
+            except Exception:
+                continue
+            sal_parts.append(f"{qty} {str(k).replace('_', ' ')}")
+    rec_text = " + ".join(rec_parts[:6]) if rec_parts else ""
+    sal_text = " + ".join(sal_parts[:6]) if sal_parts else ""
+    s1 = f"إذا فكيت {name} في الورشة، يطلع لك مواد تصنيع بدل ما ترميه."
+    if rec_text and sal_text:
+        s2 = f"الريسايكل يعطيك تقريباً: {rec_text}، والسالفج يرجّع: {sal_text}."
+    elif rec_text:
+        s2 = f"الريسايكل يعطيك تقريباً: {rec_text}."
+    elif sal_text:
+        s2 = f"السالفج يرجّع لك: {sal_text}."
+    else:
+        return None
+    s3 = "اختر بين الريسايكل والسالفج على حسب وش ناقصك من الموارد في مخزونك."
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_quests_answer_from_local(quest: dict) -> str | None:
+    if not quest or not isinstance(quest, dict):
+        return None
+    name_val = quest.get("name")
+    if isinstance(name_val, dict):
+        qname = name_val.get("en") or next(iter(name_val.values()), None)
+    else:
+        qname = name_val
+    if not qname:
+        qname = quest.get("id") or "المهمة"
+    maps = quest.get("map") or []
+    trader = quest.get("trader") or ""
+    rewards = quest.get("rewardItemIds") or []
+    maps_text = ""
+    if isinstance(maps, list) and maps:
+        maps_text = ", ".join(maps[:3])
+        maps_text = maps_text.replace("_", " ")
+    rewards_text = ""
+    if isinstance(rewards, list) and rewards:
+        names = []
+        for r in rewards[:3]:
+            if not isinstance(r, dict):
+                continue
+            rid = r.get("itemId")
+            if not rid:
+                continue
+            names.append(str(rid).replace("_", " "))
+        if names:
+            rewards_text = ", ".join(names)
+    s1 = f"مهمة {qname} تقدر تلقاها من {trader} أو من لستة المهمات في سبيرانزا."
+    if maps_text:
+        s2 = f"تلعبها غالباً في خرائط مثل: {maps_text}."
+    else:
+        s2 = "المهمة تطلع لك في الخرائط المفتوحة حسب وضعك وتقدمك."
+    if rewards_text:
+        s3 = f"مكافآتها تشمل أشياء مثل: {rewards_text}، فلا تفوّتها إذا طلعت لك."
+    else:
+        s3 = "مكافآتها تمشيك في التقدم، فحاول تخلصها إذا ظهرت معك."
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_arc_answer_from_local(bot_item: dict) -> str | None:
+    if not bot_item or not isinstance(bot_item, dict):
+        return None
+    name = bot_item.get("name") or bot_item.get("id") or "العدو"
+    if isinstance(name, dict):
+        name = name.get("en") or next(iter(name.values()), None) or "العدو"
+    btype = bot_item.get("type") or ""
+    threat = bot_item.get("threat") or ""
+    maps = bot_item.get("maps") or []
+    drops = bot_item.get("drops") or []
+    maps_text = ""
+    if isinstance(maps, list) and maps:
+        maps_text = ", ".join([str(m).replace("_", " ") for m in maps[:3]])
+    drops_text = ""
+    if isinstance(drops, list) and drops:
+        drops_text = ", ".join([str(d).replace("_", " ") for d in drops[:4]])
+    s1 = f"{name} يعتبر من فئة {btype} ودرجة التهديد عنده {threat}."
+    if maps_text:
+        s2 = f"تلقاه غالباً في خرائط مثل: {maps_text}."
+    else:
+        s2 = "يظهر في أغلب الخرائط المفتوحة اللي فيها نشاط ARC ثقيل."
+    if drops_text:
+        s3 = f"لما تطيحه يعطيك لوت مثل: {drops_text}، فاستغله إذا شفته."
+    else:
+        s3 = "لما تطيحه يعطي لوت كويس، فدايم حاول تفتش حوله بعد القتال."
+    return normalize_official_map_names(" ".join([s1, s2, s3]))
+
+
+def build_map_events_answer_from_local(map_obj: dict) -> str | None:
+    if not map_obj or not isinstance(map_obj, dict):
+        return None
+    name_val = map_obj.get("name")
+    if isinstance(name_val, dict):
+        mname = name_val.get("en") or next(iter(name_val.values()), None)
+    else:
+        mname = name_val
+    if not mname:
+        mname = map_obj.get("id") or "الخريطة"
+    mid = map_obj.get("id") or ""
+    mtype = ""
+    if isinstance(mid, str):
+        if "dam" in mid:
+            mtype = "منطقة سد وأنهار"
+        elif "spaceport" in mid:
+            mtype = "منطقة ميناء فضائي ومنشآت صناعية"
+        elif "buried_city" in mid:
+            mtype = "مدينة مدفونة وأنقاض"
+        elif "stella_montis" in mid:
+            mtype = "منطقة جبلية ومرتفعات"
+    s1 = f"{mname} خريطة تلعب فيها رايدات ضد ARC مع أحداث عشوائية."
+    if mtype:
+        s2 = f"طابعها العام {mtype} فجهز عتاد يناسب هالبيئة."
+    else:
+        s2 = "كل خريطة لها زحمة سباونز مختلفة فجرّب تشوف وش يناسب ستايلك."
+    s3 = "ركز على معرفة سباون الأحداث والديبوهات في الخريطة عشان تستغل اللوت والزمن."
     return normalize_official_map_names(" ".join([s1, s2, s3]))
 
 
@@ -917,6 +1267,13 @@ class DatabaseManager:
         self.projects = []
         self.all_data = []
         self.loaded = False
+        self.items_index = {}
+        self.crafting_index = {}
+        self.upgrade_index = {}
+        self.trader_index = {}
+        self.quests_index = {}
+        self.maps_index = {}
+        self.arc_index = {}
         
     def load_all(self):
         """تحميل كل البيانات من المجلدات"""
@@ -1015,6 +1372,126 @@ class DatabaseManager:
             self.all_data.extend(self.trades)
             self.all_data.extend(self.skills)
             self.all_data.extend(self.projects)
+
+            for item in self.items:
+                if not isinstance(item, dict):
+                    continue
+                keys = set()
+                item_id = item.get("id")
+                if item_id:
+                    for k in normalize_key(item_id):
+                        keys.add(k)
+                name_val = item.get("name")
+                if isinstance(name_val, dict):
+                    en_name = name_val.get("en") or next(iter(name_val.values()), None)
+                else:
+                    en_name = name_val
+                if en_name:
+                    for k in normalize_key(en_name):
+                        keys.add(k)
+                for k in keys:
+                    lst = self.items_index.get(k)
+                    if lst is None:
+                        lst = []
+                        self.items_index[k] = lst
+                    lst.append(item)
+                    if item.get("recipe"):
+                        lst_c = self.crafting_index.get(k)
+                        if lst_c is None:
+                            lst_c = []
+                            self.crafting_index[k] = lst_c
+                        lst_c.append(item)
+                    if item.get("upgradeCost"):
+                        lst_u = self.upgrade_index.get(k)
+                        if lst_u is None:
+                            lst_u = []
+                            self.upgrade_index[k] = lst_u
+                        lst_u.append(item)
+
+            for trade in self.trades:
+                if not isinstance(trade, dict):
+                    continue
+                item_id = trade.get("itemId")
+                if not item_id:
+                    continue
+                keys = normalize_key(item_id)
+                if not keys:
+                    continue
+                for k in keys:
+                    lst = self.trader_index.get(k)
+                    if lst is None:
+                        lst = []
+                        self.trader_index[k] = lst
+                    lst.append(trade)
+
+            for quest in self.quests:
+                if not isinstance(quest, dict):
+                    continue
+                keys = set()
+                qid = quest.get("id")
+                if qid:
+                    for k in normalize_key(qid):
+                        keys.add(k)
+                name_val = quest.get("name")
+                if isinstance(name_val, dict):
+                    en_name = name_val.get("en") or next(iter(name_val.values()), None)
+                else:
+                    en_name = name_val
+                if en_name:
+                    for k in normalize_key(en_name):
+                        keys.add(k)
+                for k in keys:
+                    lst = self.quests_index.get(k)
+                    if lst is None:
+                        lst = []
+                        self.quests_index[k] = lst
+                    lst.append(quest)
+
+            for m in self.maps:
+                if not isinstance(m, dict):
+                    continue
+                keys = set()
+                mid = m.get("id")
+                if mid:
+                    for k in normalize_key(mid):
+                        keys.add(k)
+                name_val = m.get("name")
+                if isinstance(name_val, dict):
+                    en_name = name_val.get("en") or next(iter(name_val.values()), None)
+                else:
+                    en_name = name_val
+                if en_name:
+                    for k in normalize_key(en_name):
+                        keys.add(k)
+                for k in keys:
+                    lst = self.maps_index.get(k)
+                    if lst is None:
+                        lst = []
+                        self.maps_index[k] = lst
+                    lst.append(m)
+
+            for bot_item in self.bots:
+                if not isinstance(bot_item, dict):
+                    continue
+                keys = set()
+                bid = bot_item.get("id")
+                if bid:
+                    for k in normalize_key(bid):
+                        keys.add(k)
+                name_val = bot_item.get("name")
+                if isinstance(name_val, dict):
+                    en_name = name_val.get("en") or next(iter(name_val.values()), None)
+                else:
+                    en_name = name_val
+                if en_name:
+                    for k in normalize_key(en_name):
+                        keys.add(k)
+                for k in keys:
+                    lst = self.arc_index.get(k)
+                    if lst is None:
+                        lst = []
+                        self.arc_index[k] = lst
+                    lst.append(bot_item)
             
             self.loaded = True
             logger.info(f"✅ تم تحميل {len(self.all_data)} عنصر من قاعدة البيانات")
@@ -1756,7 +2233,19 @@ class EmbedBuilder:
 """
         embed.add_field(name="🤖 استخدام AI", value=ai_text, inline=True)
 
-        # عرض وضع التشغيل الحالي (ai_only / wiki_first / wiki_only)
+        local_count = ANSWER_SOURCE_STATS.get("local", 0)
+        wiki_count = ANSWER_SOURCE_STATS.get("wiki", 0)
+        safe_count = ANSWER_SOURCE_STATS.get("safe", 0)
+        ai_count = ANSWER_SOURCE_STATS.get("ai", 0)
+        answer_text = f"""
+📘 Local: **{local_count}**
+📙 Wiki: **{wiki_count}**
+🛡️ Safe: **{safe_count}**
+🤖 AI: **{ai_count}**
+آخر مصدر: **{LAST_ANSWER_SOURCE or "غير محدد"}**
+"""
+        embed.add_field(name="📌 مصادر الإجابات", value=answer_text, inline=False)
+
         embed.add_field(name="⚙️ وضع الإجابة", value=f"**{AI_MODE}**", inline=False)
         
         embed.add_field(name="⏱️ وقت التشغيل", value=uptime, inline=False)
@@ -2254,16 +2743,51 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
     # تحديد نوع السؤال وبناء الـ Prompt
     # ═══════════════════════════════════════════════════════════
     
-    location_keywords = ['وين', 'اين', 'أين', 'فين', 'location', 'where', 'place', 'spot', 'spawn']
-    obtain_keywords = ['كيف احصل', 'كيف أجيب', 'من وين', 'drop', 'drops', 'loot', 'يطيح', 'يحصل', 'احصل']
+    location_keywords = ['وين', 'اين', 'أين', 'فين', 'location', 'where', 'place', 'spot', 'spawn', 'مكان', 'loc']
+    obtain_keywords = ['كيف احصل', 'كيف أجيب', 'من وين', 'drop', 'drops', 'loot', 'يطيح', 'يحصل', 'احصل', 'farm', 'sources', 'containers']
+    blueprint_keywords = ['مخطط', 'blueprint', 'مكان المخطط', 'الوصفة']
+    crafting_keywords = ['recipe', 'craft', 'تصنع', 'تصنيع', 'مكونات', 'وصفة']
+    upgrade_keywords = ['ترقية', 'طور', 'upgrade', 'level up', 'upgrading']
     repair_keywords = ['repair', 'repairing', 'تصليح', 'تصلح', 'إصلاح', 'اصلح', 'أصلح', 'fix']
-    # ملاحظة: "متطلبات" كلمة عامة، فلا نحسبها Crafting لو السؤال واضح إنه Repair
-    crafting_keywords = ['recipe', 'craft', 'تصنع', 'تصنيع', 'مخطط', 'مكونات', 'blueprint', 'وصفة']
-    
+    recycle_keywords = ['تدوير', 'تفكيك', 'recycle', 'salvage', 'سالفج', 'ريسايكل']
+    trader_keywords = ['سعر', 'ينباع', 'بكم', 'تاجر', 'sold', 'buy', 'شراء', 'بيع']
+    quests_keywords = ['مهمة', 'كويست', 'mission', 'quest']
+    arc_keywords = ['ارك', 'arc', 'عدو', 'enemy', 'bot', 'روبوت']
+    maps_keywords = ['خريطة', 'map', 'event', 'أحداث', 'mapevent', 'map event']
+
     is_location_question = any(k in q_lower for k in location_keywords)
     is_obtain_question = any(k in q_lower for k in obtain_keywords)
+    is_blueprint_question = any(k in q_lower for k in blueprint_keywords)
     is_repair_question = any(k in q_lower for k in repair_keywords)
     is_crafting_question = (any(k in q_lower for k in crafting_keywords) or 'متطلبات' in q_lower) and not is_repair_question
+    is_upgrade_question = any(k in q_lower for k in upgrade_keywords)
+    is_recycle_question = any(k in q_lower for k in recycle_keywords)
+    is_trader_question = any(k in q_lower for k in trader_keywords)
+    is_quests_question = any(k in q_lower for k in quests_keywords)
+    is_arc_question = any(k in q_lower for k in arc_keywords)
+    is_maps_question = any(k in q_lower for k in maps_keywords)
+
+    intent = "unknown"
+    if is_location_question or is_obtain_question:
+        intent = "obtain/location"
+    elif is_repair_question:
+        intent = "repair"
+    elif is_crafting_question:
+        intent = "crafting"
+    elif is_upgrade_question:
+        intent = "upgrade"
+    elif is_blueprint_question:
+        intent = "blueprint"
+    elif is_recycle_question:
+        intent = "recycle/salvage"
+    elif is_trader_question:
+        intent = "trader/price"
+    elif is_quests_question:
+        intent = "quests/missions"
+    elif is_arc_question:
+        intent = "arc/enemies"
+    elif is_maps_question:
+        intent = "maps/events"
 
     # ═══════════════════════════════════════════════════════════
     # وضعيات التشغيل (AI_MODE)
@@ -2274,25 +2798,151 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
 
     focus_display_name = focus_item_name or focus_name or (wiki_data.get('item_name') if wiki_data else '') or "العنصر"
     direct_answer = None
+    direct_source = None
 
-    if AI_MODE in ("wiki_first", "wiki_only"):
-        if is_repair_question:
-            direct_answer = build_repair_answer_from_wiki(focus_display_name, wiki_data)
-        elif is_location_question or is_obtain_question:
-            direct_answer = build_location_or_obtain_answer_from_wiki(focus_display_name, wiki_data)
+    db = bot.database
+    numeric_intents = {"crafting", "upgrade", "trader/price", "repair", "recycle/salvage"}
 
-    # لو عندنا جواب ثابت من الويكي، نرسله مباشرة (يوفر AI ويمنع الهلوسة)
+    if intent == "crafting":
+        item_local = None
+        if focus_item and isinstance(focus_item, dict) and focus_item.get("recipe"):
+            item_local = focus_item
+        else:
+            if focus_display_name:
+                for k in normalize_key(focus_display_name):
+                    lst = db.crafting_index.get(k)
+                    if lst:
+                        item_local = lst[0]
+                        break
+        if item_local:
+            direct_answer = build_crafting_answer_from_local(item_local)
+            if direct_answer:
+                direct_source = "local"
+    elif intent == "upgrade":
+        item_local = None
+        if focus_item and isinstance(focus_item, dict) and focus_item.get("upgradeCost"):
+            item_local = focus_item
+        else:
+            if focus_display_name:
+                for k in normalize_key(focus_display_name):
+                    lst = db.upgrade_index.get(k)
+                    if lst:
+                        item_local = lst[0]
+                        break
+        if item_local:
+            direct_answer = build_upgrade_answer_from_local(item_local)
+            if direct_answer:
+                direct_source = "local"
+    elif intent == "trader/price":
+        item_local = None
+        if focus_item and isinstance(focus_item, dict) and focus_item.get("id"):
+            item_local = focus_item
+        else:
+            if focus_display_name:
+                for k in normalize_key(focus_display_name):
+                    lst = db.items_index.get(k)
+                    if lst:
+                        item_local = lst[0]
+                        break
+        if item_local:
+            item_id = item_local.get("id")
+            trades = []
+            if item_id:
+                trade_keys = normalize_key(item_id)
+                for tk in trade_keys:
+                    lst = db.trader_index.get(tk)
+                    if lst:
+                        trades = lst
+                        break
+            direct_answer = build_trader_answer_from_local(item_local, trades)
+            if direct_answer:
+                direct_source = "local"
+    elif intent == "recycle/salvage":
+        item_local = None
+        if focus_item and isinstance(focus_item, dict) and (focus_item.get("recyclesInto") or focus_item.get("salvagesInto")):
+            item_local = focus_item
+        else:
+            if focus_display_name:
+                for k in normalize_key(focus_display_name):
+                    lst = db.items_index.get(k)
+                    if lst:
+                        item_local = lst[0]
+                        break
+        if item_local:
+            direct_answer = build_recycle_answer_from_local(item_local)
+            if direct_answer:
+                direct_source = "local"
+    elif intent == "quests/missions":
+        quest_local = None
+        if focus_item and isinstance(focus_item, dict) and focus_item in db.quests:
+            quest_local = focus_item
+        else:
+            if focus_display_name:
+                for k in normalize_key(focus_display_name):
+                    lst = db.quests_index.get(k)
+                    if lst:
+                        quest_local = lst[0]
+                        break
+        if quest_local:
+            direct_answer = build_quests_answer_from_local(quest_local)
+            if direct_answer:
+                direct_source = "local"
+    elif intent == "arc/enemies":
+        bot_item = None
+        if focus_item and isinstance(focus_item, dict) and focus_item in db.bots:
+            bot_item = focus_item
+        else:
+            if focus_display_name:
+                for k in normalize_key(focus_display_name):
+                    lst = db.arc_index.get(k)
+                    if lst:
+                        bot_item = lst[0]
+                        break
+        if bot_item:
+            direct_answer = build_arc_answer_from_local(bot_item)
+            if direct_answer:
+                direct_source = "local"
+    elif intent == "maps/events":
+        map_local = None
+        if focus_item and isinstance(focus_item, dict) and focus_item in db.maps:
+            map_local = focus_item
+        else:
+            if focus_display_name:
+                for k in normalize_key(focus_display_name):
+                    lst = db.maps_index.get(k)
+                    if lst:
+                        map_local = lst[0]
+                        break
+        if map_local:
+            direct_answer = build_map_events_answer_from_local(map_local)
+            if direct_answer:
+                direct_source = "local"
+
+    if intent in {"obtain/location"} and not direct_answer and AI_MODE in ("wiki_first", "wiki_only"):
+        direct_answer = build_location_or_obtain_answer_from_wiki(focus_display_name, wiki_data)
+        if direct_answer:
+            direct_source = "wiki"
+    if intent == "blueprint" and not direct_answer and AI_MODE in ("wiki_first", "wiki_only"):
+        direct_answer = build_blueprint_answer_from_wiki(focus_display_name, wiki_data)
+        if direct_answer:
+            direct_source = "wiki"
+    if intent == "repair" and not direct_answer and AI_MODE in ("wiki_first", "wiki_only"):
+        direct_answer = build_repair_answer_from_wiki(focus_display_name, wiki_data)
+        if direct_answer:
+            direct_source = "wiki"
+
+    if intent in numeric_intents and not direct_answer:
+        direct_answer = build_safe_numeric_message(intent, focus_display_name)
+        direct_source = "safe"
+
     if direct_answer:
         await thinking_msg.delete()
-
         answer = direct_answer
         embed = discord.Embed(
             description=answer,
             color=COLORS["success"],
             timestamp=datetime.now()
         )
-
-        # إضافة صورة (نفس منطق الـ AI)
         img_url = None
         if focus_item:
             item_id = focus_item.get('id') or focus_item.get('itemId') or focus_item.get('slug')
@@ -2301,7 +2951,6 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
                 if isinstance(item_type, dict):
                     item_type = item_type.get('en', '')
                 item_type_lower = str(item_type).lower()
-
                 if 'bot' in item_type_lower or 'enemy' in item_type_lower:
                     folder = 'bots'
                 elif 'map' in item_type_lower:
@@ -2310,18 +2959,28 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
                     folder = 'traders'
                 else:
                     folder = 'items'
-
                 img_url = f"{IMAGES_BASE_URL}/{folder}/{item_id}.png"
-
         if not img_url and wiki_data and wiki_data.get("image_url"):
             img_url = wiki_data["image_url"]
-
         if img_url:
             embed.set_thumbnail(url=img_url)
-
-        embed.set_footer(text=f"🤖 {BOT_NAME} | wiki")
+        source_label = direct_source or "ai"
+        if source_label == "local":
+            footer_text = f"🤖 {BOT_NAME} | local"
+        elif source_label == "wiki":
+            footer_text = f"🤖 {BOT_NAME} | wiki"
+        elif source_label == "safe":
+            footer_text = f"🤖 {BOT_NAME} | safe"
+        else:
+            footer_text = f"🤖 {BOT_NAME}"
+        embed.set_footer(text=footer_text)
+        global ANSWER_SOURCE_STATS, LAST_ANSWER_SOURCE
+        if source_label in ANSWER_SOURCE_STATS:
+            ANSWER_SOURCE_STATS[source_label] = ANSWER_SOURCE_STATS.get(source_label, 0) + 1
+        else:
+            ANSWER_SOURCE_STATS["ai"] = ANSWER_SOURCE_STATS.get("ai", 0) + 1
+        LAST_ANSWER_SOURCE = source_label
         await reply_with_feedback(message, embed)
-
         if focus_item_name and focus_item:
             bot.context_manager.set_context(message.author.id, focus_item_name, focus_item)
         bot.questions_answered += 1
@@ -2480,6 +3139,9 @@ async def ask_ai_and_reply(message: discord.Message, question: str):
             embed.set_thumbnail(url=img_url)
         
         embed.set_footer(text=f"🤖 {BOT_NAME}")
+        global ANSWER_SOURCE_STATS, LAST_ANSWER_SOURCE
+        ANSWER_SOURCE_STATS["ai"] = ANSWER_SOURCE_STATS.get("ai", 0) + 1
+        LAST_ANSWER_SOURCE = "ai"
     else:
         embed = EmbedBuilder.error(
             "عذراً",
